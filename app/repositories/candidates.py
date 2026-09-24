@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.errors import CandidateIdentityMismatch, ClaimSuperseded, InvalidInput
-from app.repositories.files import truncate_message
+from app.repositories.files import batch_exists, truncate_message
 
 CANDIDATE_STATUSES = frozenset({"processed", "rejected"})
 
@@ -77,3 +77,14 @@ def upsert(session: Session, file_id: uuid.UUID, token: uuid.UUID, *, source_ent
         )
     session.commit()
     return stored.staged_id
+
+
+def list_for_batch(session: Session, batch_id: uuid.UUID) -> list[dict[str, object]] | None:
+    """Every candidate of the batch (R14.2): per file, the direct upload first, then entries in order."""
+    if not batch_exists(session, batch_id):
+        return None
+    rows = session.execute(text("""
+        SELECT staged_id, source_file_id, source_entry_name, entry_index, file_name, status, reject_reason
+        FROM staged_document WHERE batch_id = :b
+        ORDER BY source_file_id, entry_index NULLS FIRST, source_entry_name"""), {"b": batch_id}).mappings()
+    return [dict(r) for r in rows]

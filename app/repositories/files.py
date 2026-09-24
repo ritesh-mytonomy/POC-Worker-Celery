@@ -208,3 +208,18 @@ def confirm_upload(session: Session, file_id: uuid.UUID) -> ConfirmResult | None
                               {"id": file_id}).one_or_none()
     session.rollback()
     return ConfirmResult(current.status, current.organization_id, transitioned=False) if current else None
+
+
+def batch_exists(session: Session, batch_id: uuid.UUID) -> bool:
+    """True if the batch exists."""
+    return session.execute(text("SELECT 1 FROM upload_batch WHERE batch_id = :b"), {"b": batch_id}).first() is not None
+
+
+def list_batch_files(session: Session, batch_id: uuid.UUID) -> list[dict[str, object]] | None:
+    """Every file of the batch with its status fields (R14.1), oldest first then by name; None if no such batch."""
+    if not batch_exists(session, batch_id):
+        return None
+    rows = session.execute(text("""
+        SELECT file_id, file_name, status, entries_total, entries_done, attempt_count, detected_type, status_message
+        FROM upload_file WHERE batch_id = :b ORDER BY created_at, file_name, file_id"""), {"b": batch_id}).mappings()
+    return [dict(r) for r in rows]

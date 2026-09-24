@@ -147,7 +147,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** tests cover all three branches; with Redis stopped, confirm returns 200 **within 2 s**.
   - _Requirements: R2.1–R2.6, NFR-1_
 
-- [ ] **4.5 Status routes**
+- [x] **4.5 Status routes**
   - `GET /api/v1/uploads/batches/{batch_id}` and `/staged` per `design.md` §6.1.
   - **Done when:** both return the fields listed in R14.
   - _Requirements: R14.1, R14.2_

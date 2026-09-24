@@ -20,3 +20,7 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
   dependencies in `requirements.txt`; use a lock file (for example `pip-compile` or `uv lock`) with hashes.
 - **Confirm must be authenticated and organization-scoped in the real build** (LLD Module 1). The POC's
   `POST /api/v1/uploads/{file_id}/confirm` is unauthenticated and accepts any `file_id`.
+- **Kombu's `force_close_all()` closes the shared per-broker pool permanently.** Kombu keeps one connection pool
+  per broker in a process-wide registry, so a new producer for the same broker gets the closed pool back and every
+  publish fails with `Acquire on closed pool`. After a failed publish, call `kombu.pools.reset()` and rebuild the
+  producer (found in 4.4's live check; regression test `test_publish_works_again_after_a_failed_publish`).
