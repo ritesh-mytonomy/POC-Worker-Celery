@@ -28,3 +28,6 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
   `AWS_SECRET_ACCESS_KEY` to `test` so boto3 can sign requests to LocalStack; production must use an IAM role.
 - **`AWS_ENDPOINT_URL` must be absent in production.** boto3 (1.28+) reads that environment variable by itself,
   so even with the setting unset it would redirect every S3 call if the variable leaked into the environment.
+- **Outcome decisions after a resume must come from persisted state, never from counters in the worker's memory.**
+  Found by the 9.1 crash-window tests: a resumed archive run lost the rejections of the run before the crash and
+  would have reported `processed`; the API now decides `partial` from the candidate rows at finish (R7.6, rev 1.3).

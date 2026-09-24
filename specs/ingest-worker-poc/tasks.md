@@ -238,7 +238,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** a unit test with a fake internal client and `claim.entries_done = 3` on a 5-entry archive records upserts for indices 3 and 4 only, then `progress(entries_done=5)`.
   - _Requirements: R7.1–R7.6, R8.1, R8.2_
 
-- [ ] **9.2 Scenario S1**
+- [x] **9.2 Scenario S1**
   - **Done when:** S1 passes — `partial`, 3 processed, 2 rejected, no objects for rejected, `incoming/` empty.
   - _Requirements: R7, R10.2_
 
