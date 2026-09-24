@@ -208,12 +208,12 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** with an artificial 20 s sleep in the task, `heartbeat_at` advances every `HEARTBEAT_SECONDS`.
   - _Requirements: R10.1_
 
-- [ ] **7.3 Early scenario: S6**
+- [x] **7.3 Early scenario: S6**
   - Write `scripts/lib.py` helpers and `scripts/scenario_s6.py`.
   - **Done when:** S6 passes — one `claim_ok`, five `claim_lost`.
   - _Requirements: R3.4, R3.5_
 
-**Checkpoint D** — the claim guarantee is proven end to end before any file processing exists.
+**Checkpoint D** — the claim guarantee is proven end to end before any file processing exists. **Met** after task 7.3 (S6: one claim_ok, five claim_lost; its candidate check completes with 8.2).
 
 ---
 
