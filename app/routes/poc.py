@@ -1,5 +1,6 @@
 """POC-only routes (design.md §6.1): stand-ins for the presign flow and a duplicate-delivery helper for S6."""
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -47,6 +48,20 @@ class SeedOut(BaseModel):
     files: list[SeededFileOut]
 
 
+class ScanStubIn(BaseModel):
+    """How long the stub scan should take."""
+
+    model_config = ConfigDict(extra="forbid")
+    seconds: float = Field(ge=0, le=60)
+
+
+class ScanStubOut(BaseModel):
+    """The published scan task."""
+
+    task_id: str
+    enqueued_at: str
+
+
 class EnqueueOut(BaseModel):
     """How many process_upload messages were published."""
 
@@ -82,3 +97,16 @@ def enqueue(file_id: uuid.UUID, times: int = Query(default=1, ge=1, le=100),
             raise ApiError(503, "enqueue_failed", f"published {published} of {times}: {exc!r}") from exc
     log.info("poc_enqueued", file_id=str(file_id), times=times)
     return EnqueueOut(file_id=file_id, published=times)
+
+
+@router.post("/scan-stub", response_model=ScanStubOut, status_code=status.HTTP_202_ACCEPTED)
+def scan_stub(body: ScanStubIn) -> ScanStubOut:
+    """Enqueue scan_stub(seconds, enqueued_at) on clinsync.scan (design.md §6.1, R13); 503 if Redis is down."""
+    enqueued_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    try:
+        task_id = tasks_client.enqueue_scan_stub(body.seconds, enqueued_at)
+    except Exception as exc:
+        log.warning("enqueue_failed", task="scan_stub", error=repr(exc))
+        raise ApiError(503, "enqueue_failed", f"scan_stub not published: {exc!r}") from exc
+    log.info("scan_stub_enqueued", task_id=task_id, enqueued_at=enqueued_at)
+    return ScanStubOut(task_id=task_id, enqueued_at=enqueued_at)

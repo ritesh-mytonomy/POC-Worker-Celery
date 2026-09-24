@@ -289,7 +289,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 12 · Scan stub  ·  ~1 h
 
-- [ ] **12.1 `scan_stub` and route**
+- [x] **12.1 `scan_stub` and route**
   - `workers/scan.py::scan_stub(seconds, enqueued_at)` logs `scan_started` with `enqueued_at` and the start time, sleeps, logs `scan_finished`. `POST /poc/scan-stub` enqueues it on `clinsync.scan`.
   - **Done when:** S7 passes — scan starts within 2 s while both ingest slots are busy.
   - _Requirements: R13.2_

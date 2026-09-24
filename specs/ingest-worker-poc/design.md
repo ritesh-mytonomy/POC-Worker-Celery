@@ -336,7 +336,7 @@ Celery's publish defaults retry and can block for seconds when Redis is down, br
 ```python
 # workers/celery_app.py
 app = Celery("clinsync", broker=settings.REDIS_URL,
-             include=["workers.ingest", "workers.sweepers"])  # rev 1.3 — task modules; grows in 12.1
+             include=["workers.ingest", "workers.sweepers", "workers.scan"])  # rev 1.3 — task modules
 
 app.conf.update(
     task_acks_late=True,                 # R9.1 — ack after the body, not on receipt

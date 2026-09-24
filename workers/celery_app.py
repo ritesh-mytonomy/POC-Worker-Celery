@@ -32,7 +32,7 @@ def _log_start_instead_of_banner(sender: str, instance: Any, options: dict[str, 
 settings = get_settings()
 
 app = Celery("clinsync", broker=settings.REDIS_URL,
-             include=["workers.ingest", "workers.sweepers"])   # task modules to register
+             include=["workers.ingest", "workers.sweepers", "workers.scan"])   # task modules to register
 
 app.conf.update(
     task_acks_late=True,                 # R9.1 — ack after the body, not on receipt

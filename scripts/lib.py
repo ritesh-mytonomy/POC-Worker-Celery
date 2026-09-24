@@ -249,8 +249,11 @@ def cleanup(scenario: Scenario, batch_id: str, keys: list[str]) -> None:
     user, db = os.environ.get("POSTGRES_USER", "clinsync"), os.environ.get("POSTGRES_DB", "clinsync")
     compose("exec", "-T", "postgres", "psql", "-U", user, "-d", db, "-qtAc",
             f"DELETE FROM upload_batch WHERE batch_id = '{uuid.UUID(batch_id)}'")
-    for key in [*keys, *staging_keys_for_batch(batch_id)]:
-        compose("exec", "-T", "localstack", "awslocal", "s3", "rm", f"s3://{BUCKET}/{key}")
+    doomed = [*keys, *staging_keys_for_batch(batch_id)]
+    for start in range(0, len(doomed), 1000):                  # one call per 1000 keys, not one per object
+        batch = {"Objects": [{"Key": k} for k in doomed[start:start + 1000]], "Quiet": True}
+        compose("exec", "-T", "localstack", "awslocal", "s3api", "delete-objects", "--bucket", BUCKET,
+                "--delete", json.dumps(batch))
 
 
 def run(main: Any) -> None:
