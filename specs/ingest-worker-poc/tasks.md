@@ -184,7 +184,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 6 · Celery  ·  ~1.5 h
 
-- [ ] **6.1 Celery app**
+- [x] **6.1 Celery app**
   - `workers/celery_app.py` exactly per `design.md` §7, including routes and beat schedule.
   - **Done when:** `celery -A workers.celery_app inspect conf` from `worker-ingest` shows `task_acks_late: True`, `worker_prefetch_multiplier: 1`, and the three queues.
   - _Requirements: R9.1–R9.4, R13.1_

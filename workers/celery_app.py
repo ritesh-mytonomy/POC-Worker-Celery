@@ -1,10 +1,11 @@
-"""Celery app — minimal stub for Checkpoint A; replaced by task 6.1 (design.md §7)."""
+"""The workers' Celery app (design.md §7): delivery guarantees, routes, and beat for the sweepers."""
 from typing import Any
 
 import celery.apps.worker
 from celery import Celery, signals
 
 from app.config import get_settings
+from app.constants import QUEUE_INGEST, QUEUE_MAINTENANCE, QUEUE_SCAN
 from app.logging import configure_logging, get_logger, say_json
 
 configure_logging()
@@ -31,8 +32,27 @@ def _log_start_instead_of_banner(sender: str, instance: Any, options: dict[str, 
 settings = get_settings()
 
 app = Celery("clinsync", broker=settings.REDIS_URL)
-app.conf.broker_connection_retry_on_startup = True
-app.conf.beat_schedule_filename = "/tmp/celerybeat-schedule"  # /srv is not writable by the app user
+
+app.conf.update(
+    task_acks_late=True,                 # R9.1 — ack after the body, not on receipt
+    task_reject_on_worker_lost=True,     # R9.2 — killed child → message back on the queue
+    worker_prefetch_multiplier=1,        # R9.3 — one message per process
+    task_ignore_result=True,             # state is in PostgreSQL, not a result backend
+    task_soft_time_limit=settings.TASK_SOFT_TIME_LIMIT,
+    task_time_limit=settings.TASK_TIME_LIMIT,
+    broker_transport_options={"visibility_timeout": settings.VISIBILITY_TIMEOUT},  # R9.4
+    broker_connection_retry_on_startup=True,
+    task_default_queue=QUEUE_INGEST,
+    task_routes={
+        "workers.ingest.*":   {"queue": QUEUE_INGEST},
+        "workers.scan.*":     {"queue": QUEUE_SCAN},
+        "workers.sweepers.*": {"queue": QUEUE_MAINTENANCE},
+    },
+    # Empty until task 11.1 adds workers.sweepers: beat would otherwise fire unregistered tasks every
+    # SWEEP_INTERVAL_SECONDS. 11.1 restores the two design.md §7 entries.
+    beat_schedule={},
+    beat_schedule_filename="/tmp/celerybeat-schedule",   # /srv is not writable by the app user
+)
 try:
     settings.validate()                  # R9.5 — refuse to start on a bad combination
 except ValueError as exc:
