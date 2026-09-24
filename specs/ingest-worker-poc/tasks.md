@@ -198,7 +198,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 7 · Claim-only task  ·  ~1.5 h
 
-- [ ] **7.1 `process_upload` skeleton**
+- [x] **7.1 `process_upload` skeleton**
   - Claim; on `None` log `claim_lost` and return. On success log `claim_ok`, then immediately `finish(processed)` — no file work yet.
   - **Done when:** seeding + confirming a file ends `processed` with `attempt_count = 1`.
   - _Requirements: R3.1, R3.4_
