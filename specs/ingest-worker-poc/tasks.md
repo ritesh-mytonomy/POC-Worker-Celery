@@ -294,7 +294,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** S7 passes — scan starts within 2 s while both ingest slots are busy.
   - _Requirements: R13.2_
 
-- [ ] **12.2 Scenario S4**
+- [x] **12.2 Scenario S4**
   - **Done when:** S4 passes — never more than `INGEST_CONCURRENCY` files `processing` at once.
   - _Requirements: R12.1, R12.2_
 
