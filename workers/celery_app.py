@@ -32,6 +32,7 @@ settings = get_settings()
 
 app = Celery("clinsync", broker=settings.REDIS_URL)
 app.conf.broker_connection_retry_on_startup = True
+app.conf.beat_schedule_filename = "/tmp/celerybeat-schedule"  # /srv is not writable by the app user
 try:
     settings.validate()                  # R9.5 — refuse to start on a bad combination
 except ValueError as exc:

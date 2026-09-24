@@ -13,5 +13,9 @@ RUN pip install -r requirements.txt
 
 COPY . .
 
+# Run as an unprivileged user; the code stays root-owned and read-only to it.
+RUN useradd --create-home --uid 10001 app
+USER app
+
 # Clear the base image's CMD ["python3"] so a service without its own command fails loudly.
 CMD []

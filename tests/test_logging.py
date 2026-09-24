@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from app.logging import JsonFormatter, get_logger, say_json
+from app.logging import JsonFormatter, configure_logging, get_logger, say_json
 
 
 @pytest.fixture
@@ -68,3 +68,17 @@ def test_say_json_writes_one_json_line(capfd: pytest.CaptureFixture[str]) -> Non
     say_json("worker: Warm shutdown (MainProcess)")
     line = json.loads(capfd.readouterr().out.strip())
     assert line["event"] == "worker: Warm shutdown (MainProcess)" and line["pid"] == os.getpid()
+
+
+def _access_record(path: str) -> logging.LogRecord:
+    """Build a uvicorn access record for GET `path`."""
+    return logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                             ("127.0.0.1:5000", "GET", path, "1.1", 200), None)
+
+
+def test_health_requests_are_not_logged() -> None:
+    """configure_logging filters GET /health out of the access log, and nothing else."""
+    configure_logging()
+    access = logging.getLogger("uvicorn.access")
+    assert not access.filter(_access_record("/health"))
+    assert access.filter(_access_record("/poc/seed"))

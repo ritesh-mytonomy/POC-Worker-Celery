@@ -80,6 +80,15 @@ def get_logger(name: str) -> EventLogger:
     return EventLogger(name)
 
 
+class _DropHealthChecks(logging.Filter):
+    """Drop uvicorn access records for GET /health (the container healthcheck polls it)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Return False for a /health access record."""
+        args = record.args
+        return not (isinstance(args, tuple) and len(args) == 5 and str(args[2]).split("?")[0] == "/health")
+
+
 def say_json(msg: str, _stream: Any = None, level: str = "WARNING", name: str = "celery.apps.worker") -> None:
     """Write `msg` as one JSON line straight to stdout, bypassing logging locks (safe in signal handlers)."""
     record = logging.makeLogRecord({"msg": msg, "levelname": level, "levelno": logging.getLevelName(level),
@@ -100,4 +109,7 @@ def configure_logging(level: str = "INFO") -> None:
         logger = logging.getLogger(name)
         logger.handlers = []
         logger.propagate = True
+    access = logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _DropHealthChecks) for f in access.filters):
+        access.addFilter(_DropHealthChecks())
     logging.captureWarnings(True)
