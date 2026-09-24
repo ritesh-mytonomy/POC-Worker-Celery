@@ -133,7 +133,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `tests/test_routes_internal_fencing.py` covers 200/204 with the right token and 409 with a wrong one, for every write route.
   - _Requirements: R3.1, R4.2, R4.4_
 
-- [ ] **4.3 POC seed**
+- [x] **4.3 POC seed**
   - `POST /poc/seed` — create batch and file rows (`status = uploading`, `is_archive` from extension) for objects the caller has already placed in S3. Uses `POC_ORGANIZATION_ID`. Refuses any extension not in `ALLOWED_TOP_LEVEL_EXT` with 400.
   - `POST /poc/enqueue/{file_id}?times=N` — publishes `process_upload` N times without changing state. Used by S6.
   - **Done when:** `curl` returns ids and rows exist.

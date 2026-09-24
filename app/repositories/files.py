@@ -1,6 +1,7 @@
 """upload_file repository: claim and the fenced writes that follow it (design.md §6.2)."""
 import uuid
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -127,3 +128,53 @@ def release(session: Session, file_id: uuid.UUID, token: uuid.UUID, reason: str)
     )
     session.commit()
     log.info("released", file_id=str(file_id), attempt=row["attempt_count"], reason=reason)
+
+
+@dataclass(frozen=True)
+class SeededFile:
+    """A file row created by seed_batch."""
+
+    file_id: uuid.UUID
+    file_name: str
+    is_archive: bool
+    status: str
+
+
+def file_ext_of(file_name: str) -> str:
+    """Lower-case extension without the dot ('' when there is none)."""
+    return PurePosixPath(file_name).suffix.lower().lstrip(".")
+
+
+def seed_batch(session: Session, organization_id: uuid.UUID, files: list[tuple[str, str]],
+               allowed_ext: list[str]) -> tuple[uuid.UUID, list[SeededFile]]:
+    """POC only: create a batch and `uploading` file rows for (file_name, s3_key) pairs already in incoming/."""
+    if not files:
+        raise InvalidInput("files must not be empty")
+    for file_name, s3_key in files:
+        if file_ext_of(file_name) not in allowed_ext:
+            raise InvalidInput(f"{file_name!r}: extension not allowed (allowed: {', '.join(allowed_ext)})")
+        if not s3_key.startswith("ClinSync/incoming/"):
+            raise InvalidInput(f"{s3_key!r}: s3_key must be under ClinSync/incoming/")
+    batch_id = session.execute(
+        text("INSERT INTO upload_batch (organization_id) VALUES (:org) RETURNING batch_id"), {"org": organization_id}
+    ).scalar_one()
+    seeded = []
+    for file_name, s3_key in files:
+        ext = file_ext_of(file_name)
+        row = session.execute(text("""
+            INSERT INTO upload_file (batch_id, organization_id, file_name, file_ext, is_archive, s3_key)
+            VALUES (:batch_id, :org, :file_name, :ext, :is_archive, :s3_key)
+            RETURNING file_id, file_name, is_archive, status"""),
+            {"batch_id": batch_id, "org": organization_id, "file_name": file_name, "ext": ext,
+             "is_archive": ext == "zip", "s3_key": s3_key}).mappings().one()
+        seeded.append(SeededFile(**row))
+    session.commit()
+    return batch_id, seeded
+
+
+def file_exists(session: Session, file_id: uuid.UUID) -> tuple[uuid.UUID, str] | None:
+    """Return (organization_id, status) of the file, or None if it does not exist."""
+    row = session.execute(text("SELECT organization_id, status FROM upload_file WHERE file_id = :id"),
+                          {"id": file_id}).one_or_none()
+    session.rollback()                   # read-only; end the transaction
+    return (row.organization_id, row.status) if row else None
