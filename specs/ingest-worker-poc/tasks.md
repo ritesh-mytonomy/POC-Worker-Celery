@@ -58,7 +58,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `docker compose exec localstack awslocal s3 ls` lists `clinsync-poc`, and `awslocal s3api get-bucket-lifecycle-configuration --bucket clinsync-poc` shows both rules.
   - _Requirements: R1.2, R1.4_
 
-- [ ] **1.4 docker-compose.yml**
+- [x] **1.4 docker-compose.yml**
   - Top-level `name: clinsync-ingest-poc`. Seven services per `design.md` §2. Redis with `--appendonly yes` and a **named volume `redis-data`** (S8 removes it). Healthchecks on postgres, redis, localstack. `api` and workers `depends_on: condition: service_healthy`.
   - All app services use the same `build: .` with different `command:`.
   - **Done when:** `docker compose up` brings every service to healthy / running; `docker compose ps` shows seven.

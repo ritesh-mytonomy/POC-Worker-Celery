@@ -1,6 +1,49 @@
 name: clinsync-ingest-poc
 
+x-app: &app
+  build: .
+  image: clinsync-ingest-poc:dev
+  env_file:
+    - path: .env
+      required: false
+
+x-worker: &worker
+  <<: *app
+  depends_on:
+    redis:
+      condition: service_healthy
+    api:
+      condition: service_healthy
+
 services:
+  localstack:
+    image: localstack/localstack:2026.8.4
+    environment:
+      SERVICES: s3
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./infra/localstack/init-s3.sh:/etc/localstack/init/ready.d/init-s3.sh:ro
+    healthcheck:
+      # Healthy only once the ready.d hook has created the bucket.
+      test: ["CMD-SHELL", "curl -fs http://localhost:4566/_localstack/init/ready | grep -q '\"completed\": true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   postgres:
     image: postgres:15-alpine
     environment:
@@ -9,11 +52,41 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinsync}
     volumes:
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
-  localstack:
-    image: localstack/localstack:2026.8.4
-    environment:
-      SERVICES: s3
-      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
-    volumes:
-      - ./infra/localstack/init-s3.sh:/etc/localstack/init/ready.d/init-s3.sh:ro
+  api:
+    <<: *app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  worker-ingest:
+    <<: *worker
+    command: celery -A workers.celery_app worker -Q clinsync.ingest -c ${INGEST_CONCURRENCY:-2} -n ingest@%h
+
+  worker-scan:
+    <<: *worker
+    command: celery -A workers.celery_app worker -Q clinsync.scan -c 1 -n scan@%h
+
+  worker-maint:
+    <<: *worker
+    command: celery -A workers.celery_app worker -Q clinsync.maintenance -c 1 -B -n maint@%h
+
+volumes:
+  redis-data:
