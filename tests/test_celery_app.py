@@ -51,8 +51,13 @@ def test_beat_schedule_runs_both_sweeps_every_interval_with_expiry(conf: Any) ->
 
 
 def test_sweep_tasks_are_registered_and_routed_to_maintenance(conf: Any) -> None:
-    """include= registers workers.sweepers; both route to clinsync.maintenance."""
+    """include= registers workers.sweepers; both route to clinsync.maintenance.
+
+    Imports the include= modules exactly as a starting worker does, so the test does not depend on another test
+    having imported workers.sweepers first.
+    """
     from workers.celery_app import app
+    app.loader.import_default_modules()
     for name in ("workers.sweepers.run_stale_sweep", "workers.sweepers.run_reconcile_sweep"):
         assert name in app.tasks
         assert app.amqp.router.route({}, name)["queue"].name == "clinsync.maintenance"
