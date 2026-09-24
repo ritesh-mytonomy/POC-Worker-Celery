@@ -52,7 +52,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `docker compose up postgres` then `\d staged_document` shows `uq_entry` with `NULLS NOT DISTINCT`.
   - _Requirements: R1.2, R8.3_
 
-- [ ] **1.3 LocalStack and bucket**
+- [x] **1.3 LocalStack and bucket**
   - `infra/localstack/init-s3.sh` in `/etc/localstack/init/ready.d/`: create `clinsync-poc`; add a lifecycle rule expiring `ClinSync/incoming/` after 1 day.
   - Also add a 7-day lifecycle rule on `ClinSync/staging/` — the backstop in `design.md` §8.5a.
   - **Done when:** `docker compose exec localstack awslocal s3 ls` lists `clinsync-poc`, and `awslocal s3api get-bucket-lifecycle-configuration --bucket clinsync-poc` shows both rules.

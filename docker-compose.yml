@@ -4,8 +4,16 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_DB: clinsync
-      POSTGRES_USER: clinsync
-      POSTGRES_PASSWORD: clinsync
+      POSTGRES_DB: ${POSTGRES_DB:-clinsync}
+      POSTGRES_USER: ${POSTGRES_USER:-clinsync}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinsync}
     volumes:
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+  localstack:
+    image: localstack/localstack:2026.8.4
+    environment:
+      SERVICES: s3
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
+    volumes:
+      - ./infra/localstack/init-s3.sh:/etc/localstack/init/ready.d/init-s3.sh:ro
