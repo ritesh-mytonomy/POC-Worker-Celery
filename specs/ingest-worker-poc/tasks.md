@@ -123,7 +123,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 4 · API routes  ·  ~3 h
 
-- [ ] **4.1 Internal auth**
+- [x] **4.1 Internal auth**
   - `app/security.py::require_internal_key` — constant-time compare against `INTERNAL_API_KEY`; 401 otherwise.
   - **Done when:** a route test without the header returns 401.
   - _Requirements: R4.3_
