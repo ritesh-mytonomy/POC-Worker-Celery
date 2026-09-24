@@ -70,7 +70,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 2 · Config & logging  ·  ~1.5 h
 
-- [ ] **2.1 Settings with startup validation**
+- [x] **2.1 Settings with startup validation**
   - `app/config.py` with `pydantic-settings`, every key in `design.md` §9.
   - `validate()` raises on: `VISIBILITY_TIMEOUT <= TASK_TIME_LIMIT`; `STALE_AFTER_SECONDS < 3 * HEARTBEAT_SECONDS`; `TASK_SOFT_TIME_LIMIT >= TASK_TIME_LIMIT`; empty `INTERNAL_API_KEY`.
   - Call `validate()` in API startup and in `workers/celery_app.py` at import.

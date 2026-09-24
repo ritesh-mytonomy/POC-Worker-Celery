@@ -1,0 +1,103 @@
+"""Settings for the API and workers (design.md §9), with startup validation (R9.5)."""
+from functools import lru_cache
+from typing import Annotated, Any
+from urllib.parse import quote
+
+from pydantic import UUID4, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+CsvList = Annotated[list[str], NoDecode]
+
+
+class Settings(BaseSettings):
+    """Every key in design.md §9. Defaults are the POC values; `.env` and the environment override them."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # Workers and Celery
+    INGEST_CONCURRENCY: int = 2
+    MAX_ATTEMPTS: int = 3
+    TASK_SOFT_TIME_LIMIT: int = 120
+    TASK_TIME_LIMIT: int = 150
+    VISIBILITY_TIMEOUT: int = 300
+
+    # Liveness and sweepers
+    HEARTBEAT_SECONDS: int = 5
+    STALE_AFTER_SECONDS: int = 30
+    SWEEP_INTERVAL_SECONDS: int = 15
+    RECONCILE_AFTER_SECONDS: int = 30
+
+    # Archive guards
+    MAX_ZIP_ENTRIES: int = 500
+    MAX_ZIP_UNCOMPRESSED_BYTES: int = 500 * 1024 * 1024
+    MAX_COMPRESSION_RATIO: int = 200
+    ALLOWED_ZIP_ENTRY_EXT: CsvList = ["docx"]
+    ALLOWED_TOP_LEVEL_EXT: CsvList = ["docx", "zip"]
+
+    # POC only — absent in production
+    ENTRY_DELAY_SECONDS: float = 0
+    POC_ORGANIZATION_ID: UUID4 | None = None
+
+    # Internal API
+    INTERNAL_API_BASE_URL: str = "http://api:8000"
+    INTERNAL_API_KEY: str
+
+    # Infrastructure
+    AWS_ENDPOINT_URL: str | None = None
+    S3_BUCKET: str = "clinsync-poc"
+    REDIS_URL: str = "redis://redis:6379/0"
+    POSTGRES_USER: str = "clinsync"
+    POSTGRES_PASSWORD: str = "clinsync"
+    POSTGRES_DB: str = "clinsync"
+    DATABASE_URL: str | None = None
+
+    @field_validator("ALLOWED_ZIP_ENTRY_EXT", "ALLOWED_TOP_LEVEL_EXT", mode="before")
+    @classmethod
+    def _split_csv(cls, value: Any) -> Any:
+        """Parse a comma-separated string into lowercase extensions."""
+        if isinstance(value, str):
+            return [part.strip().lower().lstrip(".") for part in value.split(",") if part.strip()]
+        return value
+
+    @model_validator(mode="after")
+    def _default_database_url(self) -> "Settings":
+        """Build DATABASE_URL from the POSTGRES_* values unless it is set explicitly."""
+        if not self.DATABASE_URL:
+            self.DATABASE_URL = (
+                f"postgresql+psycopg://{quote(self.POSTGRES_USER, safe='')}:"
+                f"{quote(self.POSTGRES_PASSWORD, safe='')}@postgres:5432/{self.POSTGRES_DB}"
+            )
+        return self
+
+    def validate(self) -> None:  # type: ignore[override]
+        """Raise ValueError listing every violated §9 constraint."""
+        errors: list[str] = []
+        if self.INGEST_CONCURRENCY < 1:
+            errors.append(f"INGEST_CONCURRENCY ({self.INGEST_CONCURRENCY}) must be >= 1")
+        if self.MAX_ATTEMPTS < 1:
+            errors.append(f"MAX_ATTEMPTS ({self.MAX_ATTEMPTS}) must be >= 1")
+        if self.TASK_SOFT_TIME_LIMIT >= self.TASK_TIME_LIMIT:
+            errors.append(
+                f"TASK_SOFT_TIME_LIMIT ({self.TASK_SOFT_TIME_LIMIT}) must be < "
+                f"TASK_TIME_LIMIT ({self.TASK_TIME_LIMIT})"
+            )
+        if self.VISIBILITY_TIMEOUT <= self.TASK_TIME_LIMIT:
+            errors.append(
+                f"VISIBILITY_TIMEOUT ({self.VISIBILITY_TIMEOUT}) must be > "
+                f"TASK_TIME_LIMIT ({self.TASK_TIME_LIMIT})"
+            )
+        if self.STALE_AFTER_SECONDS < 3 * self.HEARTBEAT_SECONDS:
+            errors.append(
+                f"STALE_AFTER_SECONDS ({self.STALE_AFTER_SECONDS}) must be >= "
+                f"3 x HEARTBEAT_SECONDS ({3 * self.HEARTBEAT_SECONDS})"
+            )
+        if not self.INTERNAL_API_KEY.strip():
+            errors.append("INTERNAL_API_KEY must be non-empty")
+        if errors:
+            raise ValueError("Invalid configuration: " + "; ".join(errors))
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Return the process-wide Settings, loaded once."""
+    return Settings()
