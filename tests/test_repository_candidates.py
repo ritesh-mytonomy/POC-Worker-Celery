@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
-from app.errors import ClaimSuperseded
+from app.errors import CandidateIdentityMismatch, ClaimSuperseded
 from app.repositories.candidates import upsert
 from app.repositories.files import _CLAIM_SQL, claim, finish, release
 from tests.db_helpers import MAX_ATTEMPTS, STALE, claimed, set_heartbeat_age
@@ -92,6 +92,19 @@ def test_long_reject_reason_is_truncated(db_session: Session) -> None:
     upsert(db_session, file_id, token, **ENTRY, status="rejected", reject_reason="r" * 600)
     reason = candidates(db_session, file_id)[0]["reject_reason"]
     assert len(reason) == 512 and reason.endswith("…")
+
+
+@pytest.mark.parametrize("change", [{"entry_index": 4}, {"file_name": "b.docx"}, {"file_ext": "pdf"}])
+def test_replay_with_different_identity_raises_and_changes_nothing(
+    db_session: Session, change: dict[str, Any]
+) -> None:
+    """A replay must reproduce entry_index, file_name and file_ext; otherwise it raises and the row is untouched."""
+    file_id, token = claimed(db_session)
+    upsert(db_session, file_id, token, **ENTRY, **REJECTED)
+    before = candidates(db_session, file_id)
+    with pytest.raises(CandidateIdentityMismatch):
+        upsert(db_session, file_id, token, **{**ENTRY, **change}, **PROCESSED)
+    assert candidates(db_session, file_id) == before
 
 
 # --- fencing ---

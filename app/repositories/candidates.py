@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.errors import ClaimSuperseded
+from app.errors import CandidateIdentityMismatch, ClaimSuperseded
 from app.repositories.files import truncate_message
 
 CANDIDATE_STATUSES = frozenset({"processed", "rejected"})
@@ -30,7 +30,7 @@ ON CONFLICT ON CONSTRAINT uq_entry DO UPDATE
 SET status = EXCLUDED.status, s3_key = EXCLUDED.s3_key,
     reject_reason = EXCLUDED.reject_reason, size_bytes = EXCLUDED.size_bytes,
     updated_at = now()
-RETURNING staged_id
+RETURNING staged_id, entry_index, file_name, file_ext
 """)
 
 
@@ -52,18 +52,28 @@ def upsert(session: Session, file_id: uuid.UUID, token: uuid.UUID, *, source_ent
            s3_key: str | None = None, reject_reason: str | None = None) -> uuid.UUID:
     """Insert or overwrite the file's candidate for this entry, fenced on the claim token; return staged_id.
 
-    batch_id and organization_id are taken from the locked parent row, never from the caller.
+    batch_id and organization_id are taken from the locked parent row, never from the caller. An overwrite
+    whose entry_index, file_name or file_ext differs from the stored row raises CandidateIdentityMismatch.
     """
     _validate(status, s3_key, reject_reason, source_entry_name, entry_index)
     parent = session.execute(_LOCK_PARENT_SQL, {"file_id": file_id, "token": token}).one_or_none()
     if parent is None:
         session.rollback()
         raise ClaimSuperseded(file_id)
-    staged_id = session.execute(_UPSERT_SQL, {
+    stored = session.execute(_UPSERT_SQL, {
         "batch_id": parent.batch_id, "organization_id": parent.organization_id, "file_id": file_id,
         "source_entry_name": source_entry_name, "entry_index": entry_index, "file_name": file_name,
         "file_ext": file_ext, "size_bytes": size_bytes, "s3_key": s3_key, "status": status,
         "reject_reason": truncate_message(reject_reason),
-    }).scalar_one()
+    }).one()
+    # A replay must reproduce the identity columns exactly (they are not overwritten on conflict);
+    # a mismatch would orphan the first call's staging object, so undo the overwrite and refuse.
+    passed = (entry_index, file_name, file_ext)
+    if (stored.entry_index, stored.file_name, stored.file_ext) != passed:
+        session.rollback()
+        raise CandidateIdentityMismatch(
+            f"candidate {source_entry_name!r} of file {file_id} is stored as "
+            f"{(stored.entry_index, stored.file_name, stored.file_ext)!r}, replay passed {passed!r}"
+        )
     session.commit()
-    return staged_id
+    return stored.staged_id

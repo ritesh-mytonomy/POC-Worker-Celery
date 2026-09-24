@@ -13,7 +13,10 @@ STALE = 30                               # the POC value
 
 
 def make_file(session: Session, status: str = "uploaded", attempt_count: int = 0) -> uuid.UUID:
-    """Insert a batch and one file with the given status and attempt count; return file_id."""
+    """Insert a batch and one file with the given status and attempt count; return file_id.
+
+    Files past `uploading` get an uploaded_at one hour old, as a confirmed file would have.
+    """
     org = uuid.uuid4()
     batch = UploadBatch(organization_id=org)
     session.add(batch)
@@ -22,6 +25,10 @@ def make_file(session: Session, status: str = "uploaded", attempt_count: int = 0
                         is_archive=False, s3_key="ClinSync/incoming/a.docx", status=status,
                         attempt_count=attempt_count)
     session.add(upload)
+    session.flush()
+    if status != "uploading":
+        session.execute(text("UPDATE upload_file SET uploaded_at = now() - interval '1 hour' WHERE file_id = :id"),
+                        {"id": upload.file_id})
     session.commit()
     return upload.file_id
 
@@ -71,3 +78,10 @@ def full_row(session: Session, file_id: uuid.UUID) -> dict[str, Any]:
 def changed(before: dict[str, Any], after: dict[str, Any]) -> set[str]:
     """Names of the columns whose values differ."""
     return {name for name in before if before[name] != after[name]}
+
+
+def set_uploaded_age(session: Session, file_id: uuid.UUID, age_seconds: int) -> None:
+    """Set uploaded_at to `age_seconds` ago, by backdating it in the database."""
+    session.execute(text("UPDATE upload_file SET uploaded_at = now() - make_interval(secs => :age) WHERE file_id = :id"),
+                    {"age": age_seconds, "id": file_id})
+    session.commit()

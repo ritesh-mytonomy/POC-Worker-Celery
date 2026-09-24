@@ -7,7 +7,7 @@
 | **Spec files** | `requirements.md` (this) · `design.md` · `tasks.md` |
 | **Source** | Tasneem Sharma — design calls of 18 Sep and 24 Sep 2026 · ClinSync LLD §M2.2.4–M2.2.6 |
 | **Notation** | Acceptance criteria use EARS: *WHEN / IF / WHILE / WHERE … THE [component] SHALL …* |
-| **Revision** | 1.2 — second pre-build review; see §6 |
+| **Revision** | 1.3 — build-time review; see §6 |
 
 ---
 
@@ -119,6 +119,7 @@ This POC proves the background half of the upload pipeline in isolation: **from 
 6. IF any entry is encrypted THEN THE Worker SHALL reject the whole archive.
 7. WHILE extracting an entry THE Worker SHALL read in chunks of at most 64 KB and SHALL NOT write more bytes than the entry's declared size.
 8. IF an entry's bytes do not match its central-directory record — size or CRC — THEN THE Worker SHALL reject the whole archive.
+9. IF two entries have the same name THEN THE Worker SHALL reject the whole archive.
 
 ### R7 · Archive entry processing
 
@@ -242,3 +243,4 @@ The POC is complete when **all nine scenarios in `design.md` §10 — S1–S8 an
 | 1.2 | The API uses its own producer-only Celery instance with bounded connect timeouts and no publish retry; R2.4 bounds a Redis-down confirm to 2 s | R2.4 · design §6.2a · task 4.4 |
 | 1.2 | `engine/` takes a `Limits` value instead of reading settings. New settings `POC_ORGANIZATION_ID`, `INTERNAL_API_BASE_URL`, `ALLOWED_TOP_LEVEL_EXT`; `/poc/seed` enforces the latter. `/poc/enqueue` route for S6; `enqueued_at` added to `scan_stub` | design §3, §6.1, §6.3, §9 · task 4.3 |
 | 1.2 | Coverage gate moves to task 13.2. Git commit after each task. Build at the working-folder root. R12.1 says "at most". `entry_index` defined as position among file entries | tasks convention, 0.1, 13.2 · R12.1 · design §4 |
+| 1.3 | A zip can hold two entries with the same name; they would collide on `uq_entry`, so the second would overwrite the first's candidate and orphan its staging object. Such an archive is now rejected whole | R6.9 · task 5.3 |

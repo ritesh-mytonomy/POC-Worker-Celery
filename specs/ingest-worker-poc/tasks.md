@@ -112,7 +112,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** tests show: inserting the same `(source_file_id, source_entry_name)` twice yields **one** row with the second call's values; the same for `source_entry_name = NULL`.
   - _Requirements: R8.3_
 
-- [ ] **3.5 Sweep queries**
+- [x] **3.5 Sweep queries**
   - `services/sweeps.py::stale_sweep` and `reconcile_sweep` per `design.md` §8.7. Enqueue via `tasks_client` — stub it for now.
   - **Done when:** tests seed stale and fresh rows and assert only stale ones move, and exhausted ones go to `error`.
   - _Requirements: R11.4, R11.5_
@@ -169,8 +169,8 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 - [ ] **5.3 `inspect_archive` and `assert_safe_path`**
   - Per `design.md` §8.5.
-  - **Done when:** `tests/test_engine_archive.py` rejects `bomb.zip` (ratio), `slip.zip` (path), `encrypted.zip`, an archive with `MAX_ZIP_ENTRIES + 1` entries, and one over the size cap; accepts `mixed.zip`. Path table covers `/abs`, `a/../b`, `C:\x`, `..\\x`.
-  - _Requirements: R6.1–R6.6_
+  - **Done when:** `tests/test_engine_archive.py` rejects `bomb.zip` (ratio), `slip.zip` (path), `encrypted.zip`, an archive with `MAX_ZIP_ENTRIES + 1` entries, one over the size cap, and one with two entries of the same name (`dupnames.zip`, rev 1.3); accepts `mixed.zip`. Path table covers `/abs`, `a/../b`, `C:\x`, `..\\x`.
+  - _Requirements: R6.1–R6.6, R6.9_
 
 - [ ] **5.4 `extract_streaming`**
   - 64 KB chunks, running total checked against declared size.

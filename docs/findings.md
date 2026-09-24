@@ -9,3 +9,8 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
 - **Fence tests need a status-only case.** In the task 3.3 one-off run with the status check removed from
   `heartbeat`, only the status-only test caught it; the after-finish and after-release tests cannot,
   because those states also clear the token.
+- **The 3.2 race test's pid proof measured closed connections.** With `NullPool`, `session.commit()` closed
+  each thread's connection, so the recorded `pg_backend_pid()` was not the connection that ran `claim()`.
+  Found and fixed in 3.4 (each thread now holds one connection for its life and asserts the pid is
+  unchanged after the claim). The exactly-one-winner result was unaffected: NullPool gave every thread its
+  own connection regardless.

@@ -8,3 +8,7 @@ class ClaimSuperseded(Exception):
         """Record which file the caller no longer owns."""
         super().__init__(f"claim superseded for file {file_id}")
         self.file_id = file_id
+
+
+class CandidateIdentityMismatch(ValueError):
+    """A replayed candidate's entry_index, file_name or file_ext differs from the stored row."""
