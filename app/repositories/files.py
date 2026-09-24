@@ -109,6 +109,7 @@ def finish(session: Session, file_id: uuid.UUID, token: uuid.UUID, status: str,
 
     For `processed` / `partial` the candidate rows decide (rev 1.3): `processed` becomes `partial` if any candidate
     is rejected (never the reverse), and an archive must have exactly `entries_total` candidates, or InvalidInput.
+    Rejecting an archive also rejects its `processed` candidates (§8.5a); `error` leaves candidates unchanged.
     """
     if status not in TERMINAL_STATUSES:
         raise InvalidInput(f"finish() needs a terminal status, got {status!r}")
@@ -118,8 +119,15 @@ def finish(session: Session, file_id: uuid.UUID, token: uuid.UUID, status: str,
         {"status": status, "status_message": truncate_message(status_message)},
         returning="file_id, is_archive, entries_total",
     )
-    # The fenced UPDATE holds the row lock: nothing below can race a takeover. Task 9.3 (design.md §8.5a) adds the
-    # rejection of `processed` candidates for status `rejected` here too.
+    # The fenced UPDATE holds the row lock until the single commit below: a takeover or a late upsert from the old
+    # owner waits for it, then sees the file rejected and its token cleared.
+    if status == "rejected" and row["is_archive"]:                        # design.md §8.5a step 2
+        session.execute(text("""
+            UPDATE staged_document
+            SET status = 'rejected', reject_reason = :reason, s3_key = NULL, updated_at = now()
+            WHERE source_file_id = :id AND status = 'processed'"""),
+            {"id": file_id, "reason": truncate_message(f"Archive rejected: {status_message}" if status_message
+                                                       else "Archive rejected")})
     if status in ("processed", "partial"):
         counts = session.execute(text("""
             SELECT count(*) AS total, count(*) FILTER (WHERE status = 'rejected') AS rejected

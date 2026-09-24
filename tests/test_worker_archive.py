@@ -1,7 +1,5 @@
 """process_archive (design.md §8.3; R7, R8.1, R8.2): the loop, archive- vs entry-level failures, and every crash
 window of the §8.3 table — crash at the exact point, run again, check nothing is duplicated, orphaned or wrong."""
-import io
-import struct
 import uuid
 import zipfile
 from collections.abc import Iterator
@@ -242,42 +240,18 @@ def test_unsafe_outer_archive_is_rejected_whole(ingest: Any, fixtures_dir: Path,
     assert api.candidates == {} and api.entries_total is None
 
 
-def _lying_third_entry(docs: dict[str, bytes], tmp_path: Path) -> Path:
-    """Three valid .docx; the third's central-directory size is patched below its real size (outer CRC lie)."""
-    data = io.BytesIO()
-    with zipfile.ZipFile(data, "w", compression=zipfile.ZIP_STORED) as zf:
-        for i in range(3):
-            zf.writestr(f"d{i}.docx", docs["docx"])
-    raw = bytearray(data.getvalue())
-    third = raw.rfind(b"PK\x01\x02")
-    (real,) = struct.unpack_from("<I", raw, third + 24)
-    struct.pack_into("<I", raw, third + 24, real // 2)                       # uncompressed size
-    struct.pack_into("<I", raw, third + 20, real // 2)                       # compressed size (stored)
-    path = tmp_path / "lying3.zip"
-    path.write_bytes(bytes(raw))
-    return path
-
-
-def test_outer_lie_mid_way_deletes_the_staging_prefix_then_reraises(ingest: Any, docs: dict[str, bytes],
-                                                                    tmp_path: Path) -> None:
+def test_outer_lie_mid_way_deletes_the_staging_prefix_then_reraises(ingest: Any, fixtures_dir: Path) -> None:
     """Third entry fails its outer CRC → delete_prefix (entries 0–1's objects gone) → Rejected re-raised (§8.5a)."""
     api, store = StatefulApi(), MemoryStore()
     with pytest.raises(Rejected, match="does not match its index"):
-        ingest.process_archive(api, claim(), _lying_third_entry(docs, tmp_path), Beat(), POC_LIMITS, store)
+        ingest.process_archive(api, claim(), fixtures_dir / "lying3.zip", Beat(), POC_LIMITS, store)
     assert api.upserts == [0, 1] and store.deleted_prefixes == [PREFIX] and store.objects == {}
 
 
-def test_inner_bomb_docx_is_an_entry_rejection(ingest: Any, docs: dict[str, bytes], fixtures_dir: Path,
-                                               tmp_path: Path) -> None:
-    """A .docx inside the archive that is itself a zip bomb → that entry rejected 'unsafe', the rest staged."""
-    path = tmp_path / "inner.zip"
-    with zipfile.ZipFile(path, "w") as zf:        # bomb stored uncompressed, so the OUTER ratio stays ~1
-        zf.writestr(zipfile.ZipInfo("a.docx"), docs["docx"], compress_type=zipfile.ZIP_DEFLATED)
-        zf.writestr(zipfile.ZipInfo("bomb.docx"), (fixtures_dir / "bomb.zip").read_bytes(),
-                    compress_type=zipfile.ZIP_STORED)
-        zf.writestr(zipfile.ZipInfo("c.docx"), docs["docx"], compress_type=zipfile.ZIP_DEFLATED)
+def test_inner_bomb_docx_is_an_entry_rejection(ingest: Any, fixtures_dir: Path) -> None:
+    """inner_bomb.zip: the inner .docx zip bomb → that entry rejected 'unsafe', the rest staged, partial."""
     api, store = StatefulApi(), MemoryStore()
-    final = ingest.process_archive(api, claim(), path, Beat(), POC_LIMITS, store)
+    final = ingest.process_archive(api, claim(), fixtures_dir / "inner_bomb.zip", Beat(), POC_LIMITS, store)
     assert final == FinalStatus("partial") and api.finish(final) == "partial"
     assert api.candidates["bomb.docx"]["status"] == "rejected"
     assert api.candidates["bomb.docx"]["reject_reason"].startswith("File is unsafe:")

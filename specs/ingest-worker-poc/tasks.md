@@ -160,7 +160,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - `fixtures/make_fixtures.py` builds every fixture in `design.md` §10.1 into `fixtures/out/`.
   - `encrypted.zip`: write normally, then set `flag_bits |= 0x1` on the `ZipInfo` in both local header and central directory.
   - `lying.zip`: write one entry, then patch its declared uncompressed size in the central directory to a smaller value.
-  - **Done when:** running it produces all ten files.
+  - **Done when:** running it produces all twelve files.
 
 - [x] **5.2 `detect_file_type`**
   - Per `design.md` §8.4. Returns a `Detection`; **never raises** for bad content. Takes a `Limits` argument — see `engine/limits.py`.
@@ -242,7 +242,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** S1 passes — `partial`, 3 processed, 2 rejected, no objects for rejected, `incoming/` empty.
   - _Requirements: R7, R10.2_
 
-- [ ] **9.3 Rejecting an archive mid-way**
+- [x] **9.3 Rejecting an archive mid-way**
   - Worker deletes `staging_prefix(claim)` **first**, then `finish(rejected)`; the API rejects only candidates currently `processed`. See `design.md` §8.5a.
   - **Done when:** an archive whose third entry fails the **outer** CRC ends `rejected`, candidates 1–2 rejected with `Archive rejected: …`, and no objects under its staging prefix · an archive containing one **inner** `.docx` that is a zip bomb ends `partial`, with that entry rejected as `unsafe` and every other entry `processed`.
   - _Requirements: R6.8_

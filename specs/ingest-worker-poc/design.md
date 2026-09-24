@@ -630,6 +630,8 @@ If an **archive-level** `Rejected` is raised on entry K, entries 0…K-1 may alr
 1. The Worker deletes everything under `staging_prefix(claim)` — possible in one call because staging keys are deterministic and grouped by `file_id`.
 2. `finish(rejected)` then sets every candidate of that file **currently `processed`** to `rejected` with reason `Archive rejected: {message}` and clears its `s3_key`. Candidates already `rejected` keep their specific reason.
 
+Step 2 runs in the same transaction as `finish`'s fenced UPDATE, which holds the file row lock until the single commit; a takeover or a late upsert waits for it and then sees the file rejected. **`finish(error)` leaves candidates unchanged** (rev 1.3): an archive that runs out of attempts part-way was not found untrustworthy, so its already-staged documents stay `processed`.
+
 Deleting first means a crash between the two steps leaves rows pointing at deleted objects on a file that is still `processing` — the next claim resumes, hits the same failure, deletes again (a no-op) and finishes. The reverse order could leave objects in `staging/` with no row referring to them. A 7-day lifecycle rule on `staging/` is the backstop either way.
 
 ### 8.6 Heartbeat
@@ -735,6 +737,8 @@ Each scenario is one script in `scripts/`, runs against a clean `docker compose 
 | `encrypted.zip` | one entry with `flag_bits |= 0x1` | unit tests |
 | `lying.zip` | entry whose declared `file_size` is patched below its real size | unit tests |
 | `dupnames.zip` | two entries with the same name, `a.docx` (rev 1.3, R6.9) | unit tests |
+| `lying3.zip` | three valid `.docx`, stored; the third's central-directory sizes patched to half (rev 1.3) | task 9.3 |
+| `inner_bomb.zip` | `a.docx`, `bomb.docx` (= `bomb.zip`, stored), `c.docx` (rev 1.3) | task 9.3 |
 
 ### 10.2 Scenarios
 

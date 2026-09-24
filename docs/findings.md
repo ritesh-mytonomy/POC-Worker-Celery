@@ -31,3 +31,7 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
 - **Outcome decisions after a resume must come from persisted state, never from counters in the worker's memory.**
   Found by the 9.1 crash-window tests: a resumed archive run lost the rejections of the run before the crash and
   would have reported `processed`; the API now decides `partial` from the candidate rows at finish (R7.6, rev 1.3).
+- **Show an archive that ended in `error` part-way on the staging screen.** `finish(error)` (attempts exhausted)
+  leaves the entries already staged as `processed`, which is right — they are valid documents — but the real
+  build's staging screen must make clear the archive stopped part-way, so a user does not commit an incomplete set
+  believing it is the whole archive.

@@ -129,6 +129,30 @@ def dupnames_zip() -> bytes:
     return buf.getvalue()
 
 
+def lying3_zip() -> bytes:
+    """lying3.zip — three valid .docx, stored; the third's central-directory sizes patched to half (task 9.3)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i in range(3):
+            zf.writestr(_info(f"d{i}.docx", zipfile.ZIP_STORED), docx_bytes(f"Lying archive document {i}"))
+    data = bytearray(buf.getvalue())
+    third = _central_offset(bytes(data))
+    (real,) = struct.unpack_from("<I", data, third + 24)
+    struct.pack_into("<I", data, third + 20, real // 2)      # compressed size (stored)
+    struct.pack_into("<I", data, third + 24, real // 2)      # uncompressed size
+    return bytes(data)
+
+
+def inner_bomb_zip() -> bytes:
+    """inner_bomb.zip — a.docx, bomb.docx (bomb.zip's bytes, stored so the outer ratio stays ~1), c.docx (task 9.3)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(_info("a.docx"), docx_bytes("Inner bomb archive, first"))
+        zf.writestr(_info("bomb.docx", zipfile.ZIP_STORED), bomb_zip())
+        zf.writestr(_info("c.docx"), docx_bytes("Inner bomb archive, last"))
+    return buf.getvalue()
+
+
 FIXTURES: dict[str, Callable[[], bytes]] = {
     "valid.docx": valid_docx,
     "renamed_exe.docx": renamed_exe_docx,
@@ -140,6 +164,8 @@ FIXTURES: dict[str, Callable[[], bytes]] = {
     "encrypted.zip": encrypted_zip,
     "lying.zip": lying_zip,
     "dupnames.zip": dupnames_zip,
+    "lying3.zip": lying3_zip,
+    "inner_bomb.zip": inner_bomb_zip,
 }
 
 
