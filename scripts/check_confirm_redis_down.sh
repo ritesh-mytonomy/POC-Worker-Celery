@@ -41,5 +41,9 @@ fail=0
 [ "$(echo "$BODY" | jq -r .enqueued)" = "false" ] || { echo "FAIL: enqueued not false"; fail=1; }
 awk -v s="$SECS" 'BEGIN { exit !(s < 2.0) }' || { echo "FAIL: took ${SECS}s (limit 2 s)"; fail=1; }
 [ -n "$LOGGED" ] || { echo "FAIL: no enqueue_failed log line"; fail=1; }
+docker compose start redis >/dev/null && docker compose up -d --wait redis >/dev/null
+UNDELIVERED=$(docker compose exec -T redis redis-cli LLEN ae.undeliver | tr -d '\r')
+echo "LLEN ae.undeliver: $UNDELIVERED"
+[ "$UNDELIVERED" = "0" ] || { echo "FAIL: ae.undeliver has $UNDELIVERED messages"; fail=1; }
 [ $fail -eq 0 ] && echo "PASS: confirm with Redis stopped"
 exit $fail

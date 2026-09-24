@@ -302,7 +302,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 13 · Scenario suite  ·  ~2 h
 
-- [ ] **13.1 Runner**
+- [x] **13.1 Runner**
   - `scripts/run_all.sh`: `docker compose down -v && docker compose up -d --wait`, regenerate fixtures, run S1–S8 and S5b in order, print a pass/fail table, exit non-zero on any failure.
   - Scenarios needing `ENTRY_DELAY_SECONDS` restart only `worker-ingest` with the override.
   - **Done when:** `./scripts/run_all.sh` prints nine passes from a clean machine. Each scenario asserts `LLEN ae.undeliver == 0` itself before exiting.
