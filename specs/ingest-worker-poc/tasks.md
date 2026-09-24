@@ -256,7 +256,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 10 · Retry and terminal failure  ·  ~2 h
 
-- [ ] **10.1 Exception classification**
+- [x] **10.1 Exception classification**
   - `engine/errors.py`: `Rejected` (deterministic) and `Transient`. The S3 helper and the internal client are the only places that raise `Transient`. Map `BadZipFile` → `Rejected("Archive is damaged")`; missing `incoming/` object → finish `error`.
   - _Requirements: R11.1, R11.2_
 

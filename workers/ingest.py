@@ -8,7 +8,7 @@ from typing import Any
 from app.constants import TASK_PROCESS_UPLOAD
 from app.errors import ClaimSuperseded
 from app.logging import get_logger
-from engine.archive import extract_streaming, inspect_archive
+from engine.archive import UNREADABLE, extract_streaming, inspect_archive
 from engine.errors import Rejected
 from engine.file_signature import detect_file_type, mismatch_reason
 from engine.limits import Limits
@@ -104,15 +104,25 @@ def _process_entry(api: BoundClient, claim: FileClaim, zf: zipfile.ZipFile, e: z
         tmp.unlink(missing_ok=True)                                       # every path, not only success (rev 1.3)
 
 
+def _open_archive(path: Path) -> zipfile.ZipFile:
+    """Open the outer zip; any format error is Rejected("Archive is damaged") (design.md §11)."""
+    try:
+        return zipfile.ZipFile(path)
+    except UNREADABLE as exc:
+        raise Rejected("Archive is damaged") from exc
+
+
 def process_archive(api: BoundClient, claim: FileClaim, path: Path, beat: Heartbeat, limits: Limits,
                     store: S3Store) -> FinalStatus:
     """Verify an archive and stage its entries, resuming after entries_done (R7, R8.1, R8.2)."""
     outer = detect_file_type(path, limits)                       # is it really an archive?
     api.progress(detected_type=outer.type)
+    if outer.type == "corrupt":
+        raise Rejected("Archive is damaged")                     # design.md §11 — BadZipFile on open
     if outer.type != "zip":
         raise Rejected(mismatch_reason("zip", outer))            # e.g. a .docx renamed .zip
     try:
-        with zipfile.ZipFile(path) as zf:
+        with _open_archive(path) as zf:
             entries = inspect_archive(zf, limits)                # R6 — archive-level
             api.progress(entries_total=len(entries))             # R7.1
             rejected_any = False
