@@ -203,7 +203,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** seeding + confirming a file ends `processed` with `attempt_count = 1`.
   - _Requirements: R3.1, R3.4_
 
-- [ ] **7.2 Heartbeat thread**
+- [x] **7.2 Heartbeat thread**
   - `workers/heartbeat.py` per `design.md` §8.6. Start after claim, stop in `finally`.
   - **Done when:** with an artificial 20 s sleep in the task, `heartbeat_at` advances every `HEARTBEAT_SECONDS`.
   - _Requirements: R10.1_

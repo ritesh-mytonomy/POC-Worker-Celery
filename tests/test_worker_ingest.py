@@ -14,9 +14,15 @@ from workers.internal_client import FileClaim, FinalStatus
 class FakeBound:
     """Records the writes of one claimed file."""
 
+    file_id = "f"
+
     def __init__(self, calls: list[Any], fail_finish: bool) -> None:
         """Share the call log; optionally lose ownership at finish."""
         self.calls, self.fail_finish = calls, fail_finish
+
+    def heartbeat(self) -> None:
+        """Record a heartbeat."""
+        self.calls.append(("heartbeat",))
 
     def finish(self, final: FinalStatus) -> None:
         """Record finish, or raise ClaimSuperseded."""
@@ -106,3 +112,12 @@ def test_task_is_registered_under_the_queue_contract_name(ingest: Any) -> None:
     from workers.celery_app import app
     assert "workers.ingest.process_upload" in app.tasks
     assert app.amqp.router.route({}, "workers.ingest.process_upload")["queue"].name == "clinsync.ingest"
+
+
+def test_heartbeat_thread_is_stopped_when_the_task_ends(ingest: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The task starts a heartbeat after claim and stops it in finally — no thread outlives the task."""
+    import threading
+    file_id = str(uuid.uuid4())
+    run(ingest, FakeInternal(a_claim(file_id)), monkeypatch, file_id)
+    run(ingest, FakeInternal(a_claim(file_id), fail_finish=True), monkeypatch, file_id)
+    assert not [t for t in threading.enumerate() if t.name.startswith("heartbeat-")]
