@@ -1,11 +1,12 @@
-fastapi
-uvicorn[standard]
-sqlalchemy>=2
-psycopg[binary]
-pydantic-settings
-celery[redis]==5.6.3  # pinned: workers/celery_app.py patches celery.apps.worker.safe_say
-boto3
-httpx
-python-docx
-pytest
-pytest-cov
+# Every direct dependency pinned to the version the suite was verified against.
+fastapi==0.141.1  # tests/test_routes_internal_auth.py walks its route tree, which changed in 0.14x
+uvicorn[standard]==0.53.0
+sqlalchemy==2.0.54
+psycopg[binary]==3.3.6
+pydantic-settings==2.15.0
+celery[redis]==5.6.3  # workers/celery_app.py patches celery.apps.worker.safe_say
+boto3==1.43.101
+httpx==0.28.1
+python-docx==1.2.0
+pytest==9.1.1
+pytest-cov==7.1.0
