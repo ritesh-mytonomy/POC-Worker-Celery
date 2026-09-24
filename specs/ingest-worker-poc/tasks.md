@@ -41,7 +41,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 1 · Environment  ·  ~2 h
 
-- [ ] **1.1 Dockerfile — one image**
+- [x] **1.1 Dockerfile — one image**
   - Python 3.11 slim, install requirements, copy source. No `CMD` — each service sets its own.
   - **Done when:** `docker build .` succeeds.
   - _Requirements: R1.3_
