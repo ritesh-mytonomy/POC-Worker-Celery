@@ -224,7 +224,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** a smoke test round-trips a file through LocalStack.
   - _Requirements: R1.4_
 
-- [ ] **8.2 `process_document`**
+- [x] **8.2 `process_document`**
   - Per `design.md` §8.2. Deterministic staging key `…/{file_id}/0000_{name}`. Finish, then delete from `incoming/`.
   - **Done when:** S2 and S3 pass.
   - _Requirements: R5.1–R5.4, R10.2, R10.3_

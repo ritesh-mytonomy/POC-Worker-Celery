@@ -30,12 +30,7 @@ def main() -> int:
         s.check("distinct task ids", len({e["task_id"] for e in claims}), 6)
         s.check("final status", final["status"], "processed")
         s.check("attempt_count", final["attempt_count"], 1)
-        candidates = lib.staged(batch_id)
-        if candidates:
-            s.check("candidates", len(candidates), 1)
-        else:
-            s.pend("candidates == 1", "0 so far — process_upload is the task 7.1 skeleton; staging arrives in "
-                                      "Phase 8 (task 8.2)")
+        s.check("candidates", len(lib.staged(batch_id)), 1)
         lib.assert_no_undeliverable(s)
     finally:
         lib.cleanup(s, batch_id, [key])

@@ -90,6 +90,16 @@ def s3_keys(prefix: str) -> list[str]:
     return json.loads(out) or []
 
 
+def staging_keys_for(file_id: str) -> list[str]:
+    """Staged objects of one file (…/staging/{org}/{batch}/{file_id}/…)."""
+    return [k for k in s3_keys("ClinSync/staging/") if f"/{file_id}/" in k]
+
+
+def staging_keys_for_batch(batch_id: str) -> list[str]:
+    """Staged objects of every file in a batch."""
+    return [k for k in s3_keys("ClinSync/staging/") if f"/{batch_id}/" in k]
+
+
 def incoming_key(run_id: str, fixture: str) -> str:
     """A fresh incoming/ key for one scenario run."""
     return f"ClinSync/incoming/{run_id}/{fixture}"
@@ -168,14 +178,14 @@ def assert_no_undeliverable(scenario: Scenario) -> None:
 
 
 def cleanup(scenario: Scenario, batch_id: str, keys: list[str]) -> None:
-    """Remove the scenario's batch (cascades to files and candidates) and its S3 objects, unless --keep."""
+    """Remove the scenario's batch (cascades to files and candidates), its incoming keys and staged objects."""
     if scenario.keep:
         print(f"  kept: batch {batch_id}, keys {keys}")
         return
     user, db = os.environ.get("POSTGRES_USER", "clinsync"), os.environ.get("POSTGRES_DB", "clinsync")
     compose("exec", "-T", "postgres", "psql", "-U", user, "-d", db, "-qtAc",
             f"DELETE FROM upload_batch WHERE batch_id = '{uuid.UUID(batch_id)}'")
-    for key in keys:
+    for key in [*keys, *staging_keys_for_batch(batch_id)]:
         compose("exec", "-T", "localstack", "awslocal", "s3", "rm", f"s3://{BUCKET}/{key}")
 
 
