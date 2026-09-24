@@ -162,7 +162,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - `lying.zip`: write one entry, then patch its declared uncompressed size in the central directory to a smaller value.
   - **Done when:** running it produces all nine files.
 
-- [ ] **5.2 `detect_file_type`**
+- [x] **5.2 `detect_file_type`**
   - Per `design.md` §8.4. Returns a `Detection`; **never raises** for bad content. Takes a `Limits` argument — see `engine/limits.py`.
   - **Done when:** `tests/test_engine_file_signature.py` asserts `valid.docx → docx`, `renamed_exe.docx → unknown`, `renamed_zip.docx → zip`, `mixed.zip → zip`, a PDF header → `pdf`, `bomb.zip` renamed `.docx` → `unsafe` with a reason, a truncated zip → `corrupt`.
   - _Requirements: R5.1, R5.2, R5.5_
