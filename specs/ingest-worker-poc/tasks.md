@@ -172,13 +172,13 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `tests/test_engine_archive.py` rejects `bomb.zip` (ratio), `slip.zip` (path), `encrypted.zip`, an archive with `MAX_ZIP_ENTRIES + 1` entries, one over the size cap, and one with two entries of the same name (`dupnames.zip`, rev 1.3); accepts `mixed.zip`. Path table covers `/abs`, `a/../b`, `C:\x`, `..\\x`.
   - _Requirements: R6.1–R6.6, R6.9_
 
-- [ ] **5.4 `extract_streaming`**
+- [x] **5.4 `extract_streaming`**
   - 64 KB chunks, running total checked against declared size.
   - Wrap the read loop to convert `zipfile.BadZipFile` into `Rejected` — see the note under `design.md` §8.5.
   - **Done when:** extracting from `lying.zip` raises `Rejected` whose message mentions the CRC; peak memory while extracting a 200 MB entry stays under 64 MB (`tracemalloc`).
   - _Requirements: R6.7, R6.8, NFR-4_
 
-**Checkpoint C** — `pytest tests/test_engine_*` passes with nothing running.
+**Checkpoint C** — `pytest tests/test_engine_*` passes with nothing running. **Met** after task 5.4.
 
 ---
 

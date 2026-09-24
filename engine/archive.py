@@ -1,10 +1,19 @@
 """Archive guards (R6): inspect the central directory before extracting anything (design.md §8.5)."""
+import os
 import re
+import tempfile
 import zipfile
-from pathlib import PurePosixPath
+import zlib
+from pathlib import Path, PurePosixPath
 
 from engine.errors import Rejected
 from engine.limits import Limits
+
+CHUNK = 64 * 1024                        # R6.7 — at most 64 KB per read
+
+# How zipfile reports content that does not match its index, beyond BadZipFile: a broken deflate stream,
+# a truncated member, an unsupported compression method, a zip64 record it cannot handle.
+UNREADABLE = (zipfile.BadZipFile, zipfile.LargeZipFile, zlib.error, EOFError, NotImplementedError)
 
 
 def inspect_archive(zf: zipfile.ZipFile, limits: Limits) -> list[zipfile.ZipInfo]:
@@ -32,3 +41,33 @@ def assert_safe_path(name: str) -> None:
     p = PurePosixPath(name.replace("\\", "/"))
     if p.is_absolute() or ".." in p.parts or re.match(r"^[A-Za-z]:", name):
         raise Rejected(f"'{name}' has an unsafe path")
+
+
+def tmp_path(tmp_dir: Path | None = None) -> Path:
+    """Create an empty temporary file for one extracted entry and return its path."""
+    fd, name = tempfile.mkstemp(prefix="clinsync-entry-", dir=tmp_dir)
+    os.close(fd)
+    return Path(name)
+
+
+def extract_streaming(zf: zipfile.ZipFile, e: zipfile.ZipInfo, chunk: int = CHUNK,
+                      tmp_dir: Path | None = None) -> Path:
+    """Extract one entry; an entry whose bytes disagree with its index is rejected (R6.7, R6.8).
+
+    Never leaves a partial temp file behind: every failure path deletes it.
+    """
+    out, total = tmp_path(tmp_dir), 0
+    try:
+        with zf.open(e) as src, out.open("wb") as dst:
+            while block := src.read(chunk):
+                total += len(block)
+                if total > e.file_size:          # defence in depth — CPython already truncates
+                    raise Rejected(f"'{e.filename}' is larger than its index claims")
+                dst.write(block)
+    except UNREADABLE as exc:                    # R6.8 — how a lying index actually surfaces (Bad CRC-32)
+        out.unlink(missing_ok=True)
+        raise Rejected(f"'{e.filename}' does not match its index ({exc or type(exc).__name__})") from exc
+    except BaseException:
+        out.unlink(missing_ok=True)              # never leave a partial temp file
+        raise
+    return out

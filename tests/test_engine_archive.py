@@ -1,11 +1,17 @@
 """Tests for engine.archive guards (design.md §8.5; R6.1–R6.6, R6.9) and extract_streaming (R6.7, R6.8)."""
+import io
+import tracemalloc
 import zipfile
+import zlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from engine.archive import assert_safe_path, inspect_archive
+from engine.archive import CHUNK, assert_safe_path, extract_streaming, inspect_archive
 from engine.errors import Rejected
 from tests.engine_helpers import POC_LIMITS, write_zip
 
@@ -111,3 +117,128 @@ def test_unsafe_path_is_rejected(name: str) -> None:
 def test_safe_path_is_accepted(name: str) -> None:
     """Names that merely contain dots are fine."""
     assert_safe_path(name)
+
+
+# --- extract_streaming (task 5.4) ---
+
+
+class FakeZip:
+    """A stand-in ZipFile whose member stream is scripted, to reach paths CPython's zipfile never takes."""
+
+    def __init__(self, stream: io.RawIOBase | Any) -> None:
+        """Serve `stream` as the member's contents."""
+        self.stream = stream
+
+    @contextmanager
+    def open(self, _: zipfile.ZipInfo) -> Iterator[Any]:
+        """Yield the scripted stream."""
+        yield self.stream
+
+
+class RecordingStream(io.BytesIO):
+    """Records every read size; optionally raises after `fail_after` reads."""
+
+    def __init__(self, data: bytes, fail_after: int | None = None, error: BaseException | None = None) -> None:
+        """Serve data; raise `error` on read number fail_after + 1."""
+        super().__init__(data)
+        self.sizes: list[int] = []
+        self.fail_after, self.error = fail_after, error
+
+    def read(self, size: int | None = -1) -> bytes:
+        """Record, maybe fail, then read."""
+        self.sizes.append(size if size is not None else -1)
+        if self.fail_after is not None and len(self.sizes) > self.fail_after and self.error is not None:
+            raise self.error
+        return super().read(size)
+
+
+def entry(name: str, size: int) -> zipfile.ZipInfo:
+    """A ZipInfo declaring `size` uncompressed bytes."""
+    info = zipfile.ZipInfo(name)
+    info.file_size = size
+    return info
+
+
+def test_extracts_an_entry_exactly(fixtures_dir: Path, tmp_path: Path) -> None:
+    """A good entry comes out byte-for-byte; the caller owns (and deletes) the file."""
+    with zipfile.ZipFile(fixtures_dir / "mixed.zip") as zf:
+        info = zf.getinfo("doc1.docx")
+        out = extract_streaming(zf, info, tmp_dir=tmp_path)
+        assert out.read_bytes() == zf.read(info) and out.parent == tmp_path
+
+
+def test_lying_index_is_rejected_with_crc_and_leaves_no_temp_file(fixtures_dir: Path, tmp_path: Path) -> None:
+    """lying.zip: the truncated stream fails its CRC; BadZipFile becomes Rejected naming the CRC (R6.8, rev 1.1)."""
+    with zipfile.ZipFile(fixtures_dir / "lying.zip") as zf:
+        (info,) = zf.infolist()
+        with pytest.raises(Rejected, match="CRC") as exc:
+            extract_streaming(zf, info, tmp_dir=tmp_path)
+    assert isinstance(exc.value.__cause__, zipfile.BadZipFile)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_reads_in_chunks_of_at_most_64_kb(tmp_path: Path) -> None:
+    """Every read asks for at most 64 KB (R6.7)."""
+    stream = RecordingStream(bytes(300 * 1024))
+    extract_streaming(FakeZip(stream), entry("a.docx", 300 * 1024), tmp_dir=tmp_path)  # type: ignore[arg-type]
+    assert CHUNK == 64 * 1024 and stream.sizes and all(0 < s <= CHUNK for s in stream.sizes)
+
+
+def test_more_bytes_than_declared_is_rejected_and_cleaned_up(tmp_path: Path) -> None:
+    """Defence in depth (never fires on CPython): a stream longer than file_size is rejected, temp file removed."""
+    stream = RecordingStream(bytes(200 * 1024))
+    with pytest.raises(Rejected, match="larger than its index claims"):
+        extract_streaming(FakeZip(stream), entry("a.docx", 100 * 1024), tmp_dir=tmp_path)  # type: ignore[arg-type]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("error", [zipfile.BadZipFile("Bad CRC-32 for file 'a.docx'"),
+                                   zlib.error("Error -3 while decompressing data"),
+                                   EOFError("Compressed file ended before the end-of-stream marker")],
+                         ids=["BadZipFile", "zlib.error", "EOFError"])
+def test_unreadable_member_mid_stream_is_rejected_and_cleaned_up(tmp_path: Path, error: BaseException) -> None:
+    """Any way the bytes disagree with the index, after partial output, → Rejected and no temp file."""
+    stream = RecordingStream(bytes(300 * 1024), fail_after=2, error=error)
+    with pytest.raises(Rejected, match="does not match its index"):
+        extract_streaming(FakeZip(stream), entry("a.docx", 300 * 1024), tmp_dir=tmp_path)  # type: ignore[arg-type]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("error", [OSError("disk full"), KeyboardInterrupt(), MemoryError()],
+                         ids=["OSError", "KeyboardInterrupt", "MemoryError"])
+def test_any_other_failure_propagates_unchanged_and_cleans_up(tmp_path: Path, error: BaseException) -> None:
+    """Non-content failures (including SoftTimeLimitExceeded-style interrupts) propagate as-is; no temp file."""
+    stream = RecordingStream(bytes(300 * 1024), fail_after=2, error=error)
+    with pytest.raises(type(error)):
+        extract_streaming(FakeZip(stream), entry("a.docx", 300 * 1024), tmp_dir=tmp_path)  # type: ignore[arg-type]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_bad_local_header_on_open_is_rejected_and_cleaned_up(fixtures_dir: Path, tmp_path: Path) -> None:
+    """A local header that disagrees with the central directory (BadZipFile on open) → Rejected, no temp file."""
+    data = bytearray((fixtures_dir / "slip.zip").read_bytes())
+    name_at = 30                                              # the first local header's file name
+    data[name_at] = ord("X")                                  # '../../evil.docx' → 'X./../evil.docx' locally
+    path = tmp_path / "header.zip"
+    path.write_bytes(bytes(data))
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    with zipfile.ZipFile(path) as zf:
+        with pytest.raises(Rejected, match="does not match its index"):
+            extract_streaming(zf, zf.infolist()[0], tmp_dir=out_dir)
+    assert list(out_dir.iterdir()) == []
+
+
+def test_200_mb_entry_extracts_in_under_64_mb_of_memory(fixtures_dir: Path, tmp_path: Path) -> None:
+    """Peak traced memory while extracting bomb.zip's 200 MB entry stays under 64 MB (NFR-4)."""
+    with zipfile.ZipFile(fixtures_dir / "bomb.zip") as zf:
+        (info,) = zf.infolist()
+        tracemalloc.start()
+        try:
+            out = extract_streaming(zf, info, tmp_dir=tmp_path)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    assert out.stat().st_size == 200 * 1024 * 1024
+    assert peak < 64 * 1024 * 1024, f"peak {peak / 1024 / 1024:.1f} MB"
+    print(f"peak traced memory: {peak / 1024 / 1024:.2f} MB")

@@ -1,20 +1,15 @@
 """What a file's bytes are, regardless of its name (design.md §8.4; R5)."""
 import zipfile
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from engine.archive import inspect_archive
+from engine.archive import UNREADABLE, inspect_archive
 from engine.errors import Rejected
 from engine.limits import Limits
 
 ZIP = b"PK\x03\x04"
 PDF = b"%PDF-"
 WORDML = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
-
-# Ways zipfile reports unreadable content, beyond BadZipFile: a broken deflate stream, a truncated member,
-# an unsupported compression method, a zip64 record it cannot handle.
-_UNREADABLE = (zipfile.BadZipFile, zipfile.LargeZipFile, zlib.error, EOFError, NotImplementedError)
 
 
 @dataclass(frozen=True)
@@ -43,7 +38,7 @@ def detect_file_type(path: Path, limits: Limits) -> Detection:
             return Detection("zip")
     except Rejected as r:
         return Detection("unsafe", str(r))
-    except _UNREADABLE as exc:
+    except UNREADABLE as exc:
         return Detection("corrupt", str(exc) or type(exc).__name__)
 
 
