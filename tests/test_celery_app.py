@@ -39,6 +39,20 @@ def test_routes_send_each_task_family_to_its_queue(conf: Any) -> None:
                                 "workers.sweepers.*": {"queue": "clinsync.maintenance"}}
 
 
-def test_beat_schedule_is_empty_until_task_11_1(conf: Any) -> None:
-    """No sweeper tasks exist yet, so beat must not schedule them (restored in 11.1)."""
-    assert conf.beat_schedule == {}
+def test_beat_schedule_runs_both_sweeps_every_interval_with_expiry(conf: Any) -> None:
+    """Both sweeps every SWEEP_INTERVAL_SECONDS (design.md §7); each message expires after one interval (11.1)."""
+    interval = get_settings().SWEEP_INTERVAL_SECONDS
+    assert conf.beat_schedule == {
+        "stale-sweep": {"task": "workers.sweepers.run_stale_sweep", "schedule": interval,
+                        "options": {"expires": interval}},
+        "reconcile-sweep": {"task": "workers.sweepers.run_reconcile_sweep", "schedule": interval,
+                            "options": {"expires": interval}},
+    }
+
+
+def test_sweep_tasks_are_registered_and_routed_to_maintenance(conf: Any) -> None:
+    """include= registers workers.sweepers; both route to clinsync.maintenance."""
+    from workers.celery_app import app
+    for name in ("workers.sweepers.run_stale_sweep", "workers.sweepers.run_reconcile_sweep"):
+        assert name in app.tasks
+        assert app.amqp.router.route({}, name)["queue"].name == "clinsync.maintenance"

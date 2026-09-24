@@ -5,7 +5,7 @@ import celery.apps.worker
 from celery import Celery, signals
 
 from app.config import get_settings
-from app.constants import QUEUE_INGEST, QUEUE_MAINTENANCE, QUEUE_SCAN
+from app.constants import QUEUE_INGEST, QUEUE_MAINTENANCE, QUEUE_SCAN, TASK_RECONCILE_SWEEP, TASK_STALE_SWEEP
 from app.logging import configure_logging, get_logger, say_json
 
 configure_logging()
@@ -31,7 +31,8 @@ def _log_start_instead_of_banner(sender: str, instance: Any, options: dict[str, 
 
 settings = get_settings()
 
-app = Celery("clinsync", broker=settings.REDIS_URL, include=["workers.ingest"])   # task modules to register
+app = Celery("clinsync", broker=settings.REDIS_URL,
+             include=["workers.ingest", "workers.sweepers"])   # task modules to register
 
 app.conf.update(
     task_acks_late=True,                 # R9.1 — ack after the body, not on receipt
@@ -48,9 +49,14 @@ app.conf.update(
         "workers.scan.*":     {"queue": QUEUE_SCAN},
         "workers.sweepers.*": {"queue": QUEUE_MAINTENANCE},
     },
-    # Empty until task 11.1 adds workers.sweepers: beat would otherwise fire unregistered tasks every
-    # SWEEP_INTERVAL_SECONDS. 11.1 restores the two design.md §7 entries.
-    beat_schedule={},
+    # Each sweep message expires after one interval: if the consumer is stuck (or beat runs separately, as in
+    # AWS), stale sweeps are discarded on receipt instead of all running at once afterwards (task 11.1).
+    beat_schedule={
+        "stale-sweep":     {"task": TASK_STALE_SWEEP, "schedule": settings.SWEEP_INTERVAL_SECONDS,
+                            "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},
+        "reconcile-sweep": {"task": TASK_RECONCILE_SWEEP, "schedule": settings.SWEEP_INTERVAL_SECONDS,
+                            "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},
+    },
     beat_schedule_filename="/tmp/celerybeat-schedule",   # /srv is not writable by the app user
 )
 try:

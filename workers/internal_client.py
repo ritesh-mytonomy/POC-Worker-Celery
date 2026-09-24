@@ -119,6 +119,10 @@ class InternalClient:
             return None
         return FileClaim.from_json(response.json())
 
+    def sweep(self, kind: str) -> dict[str, int]:
+        """Run the stale or reconcile sweep in the API (design.md §8.7); return its counts."""
+        return self.request("POST", f"/internal/sweeps/{kind}", f"sweep:{kind}").json()
+
     def with_token(self, file_id: uuid.UUID | str, token: uuid.UUID | str) -> "BoundClient":
         """A client for one claimed file that adds X-Claim-Token to every write."""
         return BoundClient(self, file_id, token)

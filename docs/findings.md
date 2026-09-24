@@ -35,3 +35,13 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
   leaves the entries already staged as `processed`, which is right — they are valid documents — but the real
   build's staging screen must make clear the archive stopped part-way, so a user does not commit an incomplete set
   believing it is the whole archive.
+- **Set explicit S3 timeouts in the real build.** boto3's defaults (60 s connect/read, retries) — and even our first
+  settings (10 s read, 3 attempts) — made a hung S3 take ~30 s to fail, long enough to hide a short outage from the
+  retry logic. The POC uses 2 s connect, 3 s read, 2 attempts: a hung S3 fails in ~7 s, an unreachable one in ~1 s.
+- **The reconcile sweeper cannot tell a lost message from one waiting in a long queue.** Any file `uploaded` for
+  longer than `RECONCILE_AFTER_SECONDS` is re-enqueued (once per that period, since a requeue resets `uploaded_at`).
+  In the POC this is accepted: a duplicate loses its claim and is acked, and `attempt_count` only counts successful
+  claims. The real build should re-enqueue by evidence, not a fixed timer: dedupe at publish (e.g. SQS FIFO
+  `MessageDeduplicationId = file_id`, or a `SETNX enqueued:{file_id}` marker with a TTL, cleared on claim), or base
+  the threshold on measured queue lag (oldest-message age plus a margin) — and alert when reconcile actually
+  requeues, since that should mean a lost message.

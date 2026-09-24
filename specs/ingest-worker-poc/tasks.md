@@ -269,7 +269,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 11 · Sweepers  ·  ~2 h
 
-- [ ] **11.1 Sweep routes and tasks**
+- [x] **11.1 Sweep routes and tasks**
   - `/internal/sweeps/stale` and `/reconcile` call the services from 3.5, now with real enqueue.
   - `workers/sweepers.py` tasks call those routes. Beat schedule from 6.1 runs them in `worker-maint`.
   - **Done when:** `docker compose logs worker-maint` shows both sweeps every `SWEEP_INTERVAL_SECONDS` with counts.

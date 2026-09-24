@@ -336,7 +336,7 @@ Celery's publish defaults retry and can block for seconds when Redis is down, br
 ```python
 # workers/celery_app.py
 app = Celery("clinsync", broker=settings.REDIS_URL,
-             include=["workers.ingest"])     # rev 1.3 — task modules to register; grows in 11.1 and 12.1
+             include=["workers.ingest", "workers.sweepers"])  # rev 1.3 — task modules; grows in 12.1
 
 app.conf.update(
     task_acks_late=True,                 # R9.1 — ack after the body, not on receipt
@@ -355,9 +355,11 @@ app.conf.update(
     },
     beat_schedule={
         "stale-sweep":     {"task": "workers.sweepers.run_stale_sweep",
-                            "schedule": settings.SWEEP_INTERVAL_SECONDS},
+                            "schedule": settings.SWEEP_INTERVAL_SECONDS,
+                            "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},   # rev 1.3
         "reconcile-sweep": {"task": "workers.sweepers.run_reconcile_sweep",
-                            "schedule": settings.SWEEP_INTERVAL_SECONDS},
+                            "schedule": settings.SWEEP_INTERVAL_SECONDS,
+                            "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},
     },
 )
 settings.validate()                      # R9.5 — refuse to start on a bad combination
@@ -681,6 +683,8 @@ def reconcile_sweep(db) -> dict:
 **The stale reset sets `uploaded_at = now()`, like `release`** (rev 1.3). Otherwise the reset file already looks older than `RECONCILE_AFTER_SECONDS` and the next reconcile sweep enqueues it a second time.
 
 **Enqueue failures** (rev 1.3). Each file is enqueued separately after the commit; one failure does not stop the rest. A failed enqueue is logged as `enqueue_failed` and counted in the result. The file is committed as `uploaded` with a fresh `uploaded_at`, so the reconcile sweep re-enqueues it once `RECONCILE_AFTER_SECONDS` have passed.
+
+**Sweep tasks** (rev 1.3). `workers/sweepers.py` calls `POST /internal/sweeps/{stale,reconcile}` and logs the counts. A failed sweep (API down, wrong key, bug) is logged as `sweep_failed` and never retried: the next beat tick is the retry. Each sweep message expires after one interval, so a stuck consumer — or a separate beat service, as in AWS — does not leave a pile of stale sweeps to run at once.
 
 Re-enqueueing a file that already has a message in flight is harmless — the second delivery loses the claim and exits (R3.4). The sweepers can therefore be generous.
 
