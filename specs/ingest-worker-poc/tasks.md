@@ -167,7 +167,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `tests/test_engine_file_signature.py` asserts `valid.docx → docx`, `renamed_exe.docx → unknown`, `renamed_zip.docx → zip`, `mixed.zip → zip`, a PDF header → `pdf`, `bomb.zip` renamed `.docx` → `unsafe` with a reason, a truncated zip → `corrupt`.
   - _Requirements: R5.1, R5.2, R5.5_
 
-- [ ] **5.3 `inspect_archive` and `assert_safe_path`**
+- [x] **5.3 `inspect_archive` and `assert_safe_path`**
   - Per `design.md` §8.5.
   - **Done when:** `tests/test_engine_archive.py` rejects `bomb.zip` (ratio), `slip.zip` (path), `encrypted.zip`, an archive with `MAX_ZIP_ENTRIES + 1` entries, one over the size cap, and one with two entries of the same name (`dupnames.zip`, rev 1.3); accepts `mixed.zip`. Path table covers `/abs`, `a/../b`, `C:\x`, `..\\x`.
   - _Requirements: R6.1–R6.6, R6.9_
