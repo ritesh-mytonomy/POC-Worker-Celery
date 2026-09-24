@@ -53,6 +53,65 @@ def compose(*args: str, stdin: bytes | None = None) -> str:
     return result.stdout.decode()
 
 
+DELAY_OVERRIDE = ["-f", "docker-compose.yml", "-f", "scripts/compose.entry-delay.yml"]
+
+
+def compose_delay(*args: str) -> str:
+    """`docker compose` with the ENTRY_DELAY_SECONDS override for worker-ingest (S5, S5b)."""
+    return compose(*DELAY_OVERRIDE, *args)
+
+
+def restore_worker_ingest() -> None:
+    """Put back the normal worker-ingest (no entry delay)."""
+    compose("up", "-d", "--wait", "--force-recreate", "worker-ingest")
+
+
+def worker_lines(service: str, since: str | None = None) -> list[dict[str, Any]]:
+    """Every JSON log line of a service (optionally since an ISO time)."""
+    args = ["logs", "--no-log-prefix", *(["--since", since] if since else []), service]
+    lines = []
+    for raw in compose(*args).splitlines():
+        try:
+            lines.append(json.loads(raw))
+        except ValueError:
+            continue
+    return lines
+
+
+def container_info(service: str) -> dict[str, str]:
+    """The service container's id, StartedAt and state."""
+    cid = compose("ps", "-a", "-q", service).strip()
+    out = subprocess.run(["docker", "inspect", "-f", "{{.Id}}|{{.State.StartedAt}}|{{.State.Status}}", cid],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    ident, started, status = out.split("|")
+    return {"id": ident, "started_at": started, "status": status}
+
+
+def redis_cli(*args: str) -> str:
+    """Run redis-cli in the redis container."""
+    return compose("exec", "-T", "redis", "redis-cli", *args).strip()
+
+
+def utc_now() -> str:
+    """Now, as an ISO-8601 UTC string (for `docker compose logs --since` and comparisons)."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def ts(line: dict[str, Any]) -> float:
+    """A log line's timestamp as epoch seconds."""
+    from datetime import datetime
+    return datetime.fromisoformat(line["ts"]).timestamp()
+
+
+def wait_until(predicate: Any, timeout: float, what: str, every: float = 0.5) -> None:
+    """Poll predicate() until true (raises TimeoutError naming `what`)."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise TimeoutError(what)
+        time.sleep(every)
+
+
 def api(method: str, path: str, body: Any = None) -> tuple[int, Any]:
     """Call the API; return (status, parsed JSON or None)."""
     data = json.dumps(body).encode() if body is not None else None
@@ -170,6 +229,11 @@ def wait_events(service: str, file_id: str, names: set[str], count: int, timeout
 def redis_llen(key: str) -> int:
     """LLEN of a Redis list."""
     return int(compose("exec", "-T", "redis", "redis-cli", "LLEN", key).strip())
+
+
+def queued_mentions(file_id: str) -> int:
+    """Messages for file_id still in Redis: ready in clinsync.ingest, or reserved/delayed in Kombu's unacked hash."""
+    return redis_cli("LRANGE", "clinsync.ingest", "0", "-1").count(file_id) + redis_cli("HVALS", "unacked").count(file_id)
 
 
 def assert_no_undeliverable(scenario: Scenario) -> None:

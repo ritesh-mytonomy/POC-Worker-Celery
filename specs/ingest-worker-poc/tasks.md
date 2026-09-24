@@ -275,7 +275,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `docker compose logs worker-maint` shows both sweeps every `SWEEP_INTERVAL_SECONDS` with counts.
   - _Requirements: R10.4, R11.4, R11.5_
 
-- [ ] **11.2 Scenarios S5, S5b and S8**
+- [x] **11.2 Scenarios S5, S5b and S8**
   - Log `pid` (`os.getpid()`) on every worker line so S5b can target the child.
   - **Done when:**
     - S5 passes — exactly 30 candidates, 30 distinct staging objects, `attempt_count = 2`, resumed at index ≥ 10
@@ -283,7 +283,7 @@ Estimates are rough, for one developer familiar with FastAPI.
     - S8 passes — phase A confirm returns 200 within 2 s with Redis down; phase B messages verifiably queued, then lost, then recovered; all three `processed`
   - _Requirements: R8.4, R9.2, R11.6_
 
-**Checkpoint E** — the open question from 18 Sep is answered and demonstrable.
+**Checkpoint E** — the open question from 18 Sep is answered and demonstrable. **Met** after task 11.2: S5 (container killed at entry 10) and S5b (one child killed at entry 5) both resume at the kill point and end with exactly 30 candidates, `attempt_count = 2`.
 
 ---
 

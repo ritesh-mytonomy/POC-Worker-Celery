@@ -1,0 +1,6 @@
+# Scenario override (S5, S5b): slow worker-ingest down so a kill lands mid-archive.
+# Use with: docker compose -f docker-compose.yml -f scripts/compose.entry-delay.yml ...
+services:
+  worker-ingest:
+    environment:
+      ENTRY_DELAY_SECONDS: ${SCENARIO_ENTRY_DELAY:-2}
