@@ -245,8 +245,8 @@ Every request carries `X-Internal-Key`. Every write after claim carries `X-Claim
 | `PUT /internal/files/{id}/candidates` | `Candidate` | 200 · 409 — **upsert** on `uq_entry` |
 | `POST /internal/files/{id}/finish` | `{status, status_message?}` | 204 · 409 — rejecting an archive also rejects its `processed` candidates (§8.5a) |
 | `POST /internal/files/{id}/release` | `{reason}` | 204 · 409 — back to `uploaded` before a retry; **sets `uploaded_at = now()`** so the reconcile sweeper does not pre-empt the backoff |
-| `POST /internal/sweeps/stale` | — | `{reset, errored}` |
-| `POST /internal/sweeps/reconcile` | — | `{requeued, errored}` |
+| `POST /internal/sweeps/stale` | — | `{reset, errored, enqueue_failed}` |
+| `POST /internal/sweeps/reconcile` | — | `{requeued, errored, enqueue_failed}` |
 
 **Claim** — atomic, one statement:
 
@@ -628,18 +628,17 @@ A daemon thread calls `POST /internal/files/{id}/heartbeat` every `HEARTBEAT_SEC
 def stale_sweep(db) -> dict:
     """Recover files whose worker stopped heartbeating."""
     reset = db.execute(text("""
-        UPDATE upload_file SET status='uploaded', claim_token=NULL, updated_at=now()
+        UPDATE upload_file SET status='uploaded', claim_token=NULL, uploaded_at=now(), updated_at=now()
         WHERE status='processing' AND heartbeat_at < now() - make_interval(secs => :stale)
           AND attempt_count < :max RETURNING file_id, organization_id"""), …).all()
     errored = db.execute(text("""
-        UPDATE upload_file SET status='error', claim_token=NULL,
+        UPDATE upload_file SET status='error', claim_token=NULL, updated_at=now(),
                status_message='Processing did not complete after the maximum number of attempts'
         WHERE status='processing' AND heartbeat_at < now() - make_interval(secs => :stale)
           AND attempt_count >= :max RETURNING file_id"""), …).all()
-    db.commit()
-    for r in reset:
-        enqueue_process_upload(r.file_id, r.organization_id)
-    return {"reset": len(reset), "errored": len(errored)}
+    db.commit()                                           # enqueue only after commit
+    failed = enqueue_each(reset)                          # per file; failures logged as enqueue_failed
+    return {"reset": len(reset), "errored": len(errored), "enqueue_failed": failed}
 
 def reconcile_sweep(db) -> dict:
     """Re-enqueue files confirmed but never claimed — covers lost Redis messages."""
@@ -649,15 +648,18 @@ def reconcile_sweep(db) -> dict:
           AND attempt_count < :max
         RETURNING file_id, organization_id"""), …).all()
     errored = db.execute(text("""
-        UPDATE upload_file SET status='error', claim_token=NULL,
+        UPDATE upload_file SET status='error', claim_token=NULL, updated_at=now(),
                status_message='Processing did not complete after the maximum number of attempts'
         WHERE status='uploaded' AND uploaded_at < now() - make_interval(secs => :age)
           AND attempt_count >= :max RETURNING file_id"""), …).all()   # backstop for fix in §8.1
-    db.commit()
-    for r in rows:
-        enqueue_process_upload(r.file_id, r.organization_id)
-    return {"requeued": len(rows), "errored": len(errored)}
+    db.commit()                                           # enqueue only after commit
+    failed = enqueue_each(rows)                           # per file; failures logged as enqueue_failed
+    return {"requeued": len(rows), "errored": len(errored), "enqueue_failed": failed}
 ```
+
+**The stale reset sets `uploaded_at = now()`, like `release`** (rev 1.3). Otherwise the reset file already looks older than `RECONCILE_AFTER_SECONDS` and the next reconcile sweep enqueues it a second time.
+
+**Enqueue failures** (rev 1.3). Each file is enqueued separately after the commit; one failure does not stop the rest. A failed enqueue is logged as `enqueue_failed` and counted in the result. The file is committed as `uploaded` with a fresh `uploaded_at`, so the reconcile sweep re-enqueues it once `RECONCILE_AFTER_SECONDS` have passed.
 
 Re-enqueueing a file that already has a message in flight is harmless — the second delivery loses the claim and exits (R3.4). The sweepers can therefore be generous.
 
@@ -717,6 +719,7 @@ Each scenario is one script in `scripts/`, runs against a clean `docker compose 
 | `slip.zip` | one entry named `../../evil.docx` | unit tests |
 | `encrypted.zip` | one entry with `flag_bits |= 0x1` | unit tests |
 | `lying.zip` | entry whose declared `file_size` is patched below its real size | unit tests |
+| `dupnames.zip` | two entries with the same name, `a.docx` (rev 1.3, R6.9) | unit tests |
 
 ### 10.2 Scenarios
 

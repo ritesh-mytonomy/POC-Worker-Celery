@@ -55,6 +55,13 @@ def processing_file(db: Session, *, attempts: int, heartbeat_age: int) -> uuid.U
     return file_id
 
 
+def backdate_updated_at(db: Session, file_id: uuid.UUID) -> None:
+    """Age updated_at, so a sweep stamping now() visibly changes it."""
+    db.execute(text("UPDATE upload_file SET updated_at = now() - interval '60 seconds' WHERE file_id = :id"),
+               {"id": file_id})
+    db.commit()
+
+
 def uploaded_file(db: Session, *, attempts: int, uploaded_age: int, status: str = "uploaded") -> uuid.UUID:
     """A file in `status` with the given attempt count and uploaded_at age."""
     file_id = make_file(db, status=status, attempt_count=attempts)
@@ -69,16 +76,19 @@ def test_stale_sweep_resets_below_max_and_errors_at_max(db_session: Session) -> 
     to_reset = processing_file(db_session, attempts=1, heartbeat_age=STALE + 5)
     to_error = processing_file(db_session, attempts=MAX_ATTEMPTS, heartbeat_age=STALE + 5)
     fresh = [processing_file(db_session, attempts=a, heartbeat_age=0) for a in (1, MAX_ATTEMPTS)]
+    backdate_updated_at(db_session, to_error)
+    error_before = full_row(db_session, to_error)
     fresh_before = [full_row(db_session, f) for f in fresh]
     enqueue = FakeEnqueue()
 
-    assert stale(db_session, enqueue) == {"reset": 1, "errored": 1}
+    assert stale(db_session, enqueue) == {"reset": 1, "errored": 1, "enqueue_failed": 0}
 
     reset_row, error_row = full_row(db_session, to_reset), full_row(db_session, to_error)
     assert reset_row["status"] == "uploaded" and reset_row["claim_token"] is None
     assert reset_row["attempt_count"] == 1
     assert error_row["status"] == "error" and error_row["claim_token"] is None
     assert error_row["status_message"] == ERROR_MESSAGE
+    assert error_row["updated_at"] > error_before["updated_at"]
     assert enqueue.calls == [(str(to_reset), str(reset_row["organization_id"]))]
     assert [full_row(db_session, f) for f in fresh] == fresh_before
 
@@ -90,20 +100,33 @@ def test_stale_sweep_ignores_files_not_processing(db_session: Session, status: s
     db_session.execute(text("UPDATE upload_file SET status = :s WHERE file_id = :id"), {"s": status, "id": file_id})
     db_session.commit()
     before = full_row(db_session, file_id)
-    assert stale(db_session, FakeEnqueue()) == {"reset": 0, "errored": 0}
+    assert stale(db_session, FakeEnqueue()) == {"reset": 0, "errored": 0, "enqueue_failed": 0}
     assert full_row(db_session, file_id) == before
 
 
+def test_stale_reset_sets_uploaded_at_so_reconcile_does_not_double_enqueue(db_session: Session) -> None:
+    """The reset stamps uploaded_at = now() (rev 1.3): an immediate reconcile sweep leaves the file alone."""
+    file_id = processing_file(db_session, attempts=1, heartbeat_age=STALE + 5)
+    before = full_row(db_session, file_id)
+    first = FakeEnqueue()
+    stale(db_session, first)
+    assert first.file_ids == [str(file_id)]
+    assert full_row(db_session, file_id)["uploaded_at"] > before["uploaded_at"]
+    assert reconcile(db_session, FakeEnqueue()) == {"requeued": 0, "errored": 0, "enqueue_failed": 0}
+
+
 def test_stale_reset_whose_enqueue_failed_is_picked_up_by_reconcile(db_session: Session) -> None:
-    """A reset file keeps its old uploaded_at, so if its enqueue fails the next reconcile sweep enqueues it."""
+    """A failed enqueue is counted, does not stop the others, and a reconcile sweep enqueues the file once it ages."""
     failed = processing_file(db_session, attempts=1, heartbeat_age=STALE + 5)
     other = processing_file(db_session, attempts=1, heartbeat_age=STALE + 5)
     first = FakeEnqueue(fail={failed})
-    assert stale(db_session, first) == {"reset": 2, "errored": 0}
+    assert stale(db_session, first) == {"reset": 2, "errored": 0, "enqueue_failed": 1}
     assert first.file_ids == [str(other)]                     # one failure does not stop the others
+    assert reconcile(db_session, FakeEnqueue()) == {"requeued": 0, "errored": 0, "enqueue_failed": 0}
+    set_uploaded_age(db_session, failed, AGE + 5)              # RECONCILE_AFTER_SECONDS pass
     later = FakeEnqueue()
     reconcile(db_session, later)
-    assert str(failed) in later.file_ids
+    assert later.file_ids == [str(failed)]
 
 
 # --- reconcile sweep ---
@@ -112,6 +135,8 @@ def test_reconcile_requeues_below_max_and_errors_at_max(db_session: Session) -> 
     """Old uploaded files below MAX_ATTEMPTS are re-enqueued (uploaded_at reset); at MAX_ATTEMPTS they error."""
     requeue = [uploaded_file(db_session, attempts=a, uploaded_age=AGE + 5) for a in (0, MAX_ATTEMPTS - 1)]
     to_error = uploaded_file(db_session, attempts=MAX_ATTEMPTS, uploaded_age=AGE + 5)
+    backdate_updated_at(db_session, to_error)
+    error_before = full_row(db_session, to_error)
     untouched = [
         uploaded_file(db_session, attempts=0, uploaded_age=0),                        # too recent
         uploaded_file(db_session, attempts=0, uploaded_age=AGE + 5, status="uploading"),
@@ -122,7 +147,7 @@ def test_reconcile_requeues_below_max_and_errors_at_max(db_session: Session) -> 
     requeue_before = [full_row(db_session, f) for f in requeue]
     enqueue = FakeEnqueue()
 
-    assert reconcile(db_session, enqueue) == {"requeued": 2, "errored": 1}
+    assert reconcile(db_session, enqueue) == {"requeued": 2, "errored": 1, "enqueue_failed": 0}
 
     assert sorted(enqueue.file_ids) == sorted(str(f) for f in requeue)
     for file_id, before in zip(requeue, requeue_before):
@@ -131,6 +156,7 @@ def test_reconcile_requeues_below_max_and_errors_at_max(db_session: Session) -> 
         assert after["attempt_count"] == before["attempt_count"]
     error_row = full_row(db_session, to_error)
     assert error_row["status"] == "error" and error_row["status_message"] == ERROR_MESSAGE
+    assert error_row["updated_at"] > error_before["updated_at"]
     assert str(to_error) not in enqueue.file_ids
     assert [full_row(db_session, f) for f in untouched] == untouched_before
 
@@ -139,10 +165,10 @@ def test_released_file_is_not_requeued_before_the_backoff(db_session: Session) -
     """release resets uploaded_at (rev 1.2): reconcile leaves it alone until RECONCILE_AFTER_SECONDS pass."""
     file_id, token = claimed(db_session)
     release(db_session, file_id, token, reason="retry")
-    assert reconcile(db_session, FakeEnqueue()) == {"requeued": 0, "errored": 0}
+    assert reconcile(db_session, FakeEnqueue()) == {"requeued": 0, "errored": 0, "enqueue_failed": 0}
     set_uploaded_age(db_session, file_id, AGE + 5)
     later = FakeEnqueue()
-    assert reconcile(db_session, later) == {"requeued": 1, "errored": 0}
+    assert reconcile(db_session, later) == {"requeued": 1, "errored": 0, "enqueue_failed": 0}
     assert later.file_ids == [str(file_id)]
 
 
@@ -154,12 +180,12 @@ def test_reconcile_enqueue_failure_is_retried_by_a_later_sweep(
     other = uploaded_file(db_session, attempts=0, uploaded_age=AGE + 5)
     first = FakeEnqueue(fail={failed})
     with caplog.at_level(logging.WARNING, logger="app.services.sweeps"):
-        assert reconcile(db_session, first) == {"requeued": 2, "errored": 0}
+        assert reconcile(db_session, first) == {"requeued": 2, "errored": 0, "enqueue_failed": 1}
     assert first.file_ids == [str(other)]
     record = next(r for r in caplog.records if r.getMessage() == "enqueue_failed")
     assert record.fields["file_id"] == str(failed) and record.fields["sweep"] == "reconcile"
 
-    assert reconcile(db_session, FakeEnqueue()) == {"requeued": 0, "errored": 0}   # uploaded_at just reset
+    assert reconcile(db_session, FakeEnqueue()) == {"requeued": 0, "errored": 0, "enqueue_failed": 0}   # uploaded_at just reset
     set_uploaded_age(db_session, failed, AGE + 5)
     later = FakeEnqueue()
     reconcile(db_session, later)
