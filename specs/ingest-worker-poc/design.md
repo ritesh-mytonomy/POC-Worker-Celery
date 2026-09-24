@@ -335,7 +335,8 @@ Celery's publish defaults retry and can block for seconds when Redis is down, br
 
 ```python
 # workers/celery_app.py
-app = Celery("clinsync", broker=settings.REDIS_URL)
+app = Celery("clinsync", broker=settings.REDIS_URL,
+             include=["workers.ingest"])     # rev 1.3 — task modules to register; grows in 11.1 and 12.1
 
 app.conf.update(
     task_acks_late=True,                 # R9.1 — ack after the body, not on receipt
@@ -626,7 +627,7 @@ Deleting first means a crash between the two steps leaves rows pointing at delet
 
 ### 8.6 Heartbeat
 
-A daemon thread calls `POST /internal/files/{id}/heartbeat` every `HEARTBEAT_SECONDS`. If it receives 409 it sets a `superseded` flag and stops. The main loop checks the flag between entries (`raise_if_superseded`); every write is fenced regardless, so the flag only makes the loser stop sooner.
+A daemon thread calls `POST /internal/files/{id}/heartbeat` every `HEARTBEAT_SECONDS`. If it receives 409 it sets a `superseded` flag and stops. **Rev 1.3:** a 401 or any other non-retryable 4xx also stops it and is re-raised by the task's next check (a configuration error or worker bug should not keep processing); a 5xx or connection error is logged and beating continues. The main loop checks the flag between entries (`raise_if_superseded`); every write is fenced regardless, so the flag only makes the loser stop sooner.
 
 ### 8.7 Sweepers
 

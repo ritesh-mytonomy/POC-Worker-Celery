@@ -19,7 +19,7 @@ class Beats(Protocol):
 
 
 class Heartbeat:
-    """Daemon thread calling heartbeat() every `every` seconds until stopped or superseded."""
+    """Daemon thread calling heartbeat() every `every` seconds until stopped, superseded or refused."""
 
     def __init__(self, api: Beats, every: float) -> None:
         """Prepare, but do not start, the thread."""
@@ -27,6 +27,7 @@ class Heartbeat:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f"heartbeat-{api.file_id}", daemon=True)
         self.superseded = False
+        self.stop_reason: BaseException | None = None
         self.beats = 0
 
     def start(self) -> "Heartbeat":
@@ -41,22 +42,28 @@ class Heartbeat:
             self._thread.join(timeout=15)
 
     def raise_if_superseded(self) -> None:
-        """Raise ClaimSuperseded if a heartbeat was refused; lets the main loop stop sooner (writes are fenced anyway)."""
+        """Raise if beating stopped for good, so the task stops at its next check (writes are fenced anyway).
+
+        409 → ClaimSuperseded; 401 or another non-retryable 4xx → that same error (a configuration or worker bug).
+        """
         if self.superseded:
             raise ClaimSuperseded(self._api.file_id)
+        if self.stop_reason is not None:
+            raise self.stop_reason
 
     def _run(self) -> None:
-        """Beat until stopped; stop for good on 409 or an unexpected error."""
+        """Beat until stopped. 409 or a non-retryable error stops for good; Transient keeps beating."""
         while not self._stop.wait(self._every):
             try:
                 self._api.heartbeat()
                 self.beats += 1
-            except ClaimSuperseded:
-                self.superseded = True
+            except ClaimSuperseded as exc:
+                self.superseded, self.stop_reason = True, exc
                 log.warning("heartbeat_superseded", file_id=str(self._api.file_id), beats=self.beats)
                 return
-            except Transient as exc:                                # the next beat may get through
+            except Transient as exc:                                # 5xx, refused, timeout: next beat may work
                 log.warning("heartbeat_failed", file_id=str(self._api.file_id), error=repr(exc))
-            except Exception as exc:                                # contract/auth error: once, loudly
+            except Exception as exc:                                # 401, other 4xx, bugs: stop the task too
+                self.stop_reason = exc
                 log.exception("heartbeat_stopped", file_id=str(self._api.file_id), error=repr(exc))
                 return

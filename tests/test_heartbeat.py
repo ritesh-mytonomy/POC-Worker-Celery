@@ -7,7 +7,7 @@ import pytest
 from app.errors import ClaimSuperseded
 from engine.errors import Transient
 from workers.heartbeat import Heartbeat
-from workers.internal_client import WorkerContractError
+from workers.internal_client import InternalAuthError, WorkerContractError
 
 
 class FakeApi:
@@ -69,22 +69,28 @@ def test_409_sets_superseded_and_stops() -> None:
 
 
 def test_transient_failure_keeps_beating() -> None:
-    """A Transient error (API briefly down) is logged and the next beat is attempted."""
-    api = FakeApi([Transient("503"), Transient("reset")])
+    """5xx or connection errors (Transient) are logged; beating continues and the task is not stopped."""
+    api = FakeApi([Transient("503"), Transient("connection refused")])
     beat = Heartbeat(api, every=0.02).start()
     wait_for(lambda: beat.beats >= 2)
     beat.stop()
-    assert api.calls >= 4 and not beat.superseded
+    assert api.calls >= 4 and not beat.superseded and beat.stop_reason is None
+    beat.raise_if_superseded()
 
 
-def test_unexpected_error_stops_once_without_dying_silently(caplog: pytest.LogCaptureFixture) -> None:
-    """A contract/auth error stops the thread after one loud log line (no spam, no silent death)."""
-    api = FakeApi([WorkerContractError(401, "invalid_internal_key", "bad key")])
+@pytest.mark.parametrize("error", [InternalAuthError(401, "invalid_internal_key", "bad key"),
+                                   WorkerContractError(400, "validation_error", "bad"),
+                                   WorkerContractError(404, "not_found", "gone")], ids=["401", "400", "404"])
+def test_non_retryable_error_stops_beating_and_the_task(error: BaseException, caplog: pytest.LogCaptureFixture) -> None:
+    """401 or another non-retryable 4xx: one loud log line, the thread stops, and the task's next check raises it."""
+    api = FakeApi([error])
     beat = Heartbeat(api, every=0.02).start()
     wait_for(lambda: not beat._thread.is_alive())
     beat.stop()
     assert api.calls == 1 and not beat.superseded
     assert [r.getMessage() for r in caplog.records if r.name == "workers.heartbeat"] == ["heartbeat_stopped"]
+    with pytest.raises(type(error)):
+        beat.raise_if_superseded()
 
 
 def test_not_superseded_does_not_raise_and_stop_is_idempotent() -> None:

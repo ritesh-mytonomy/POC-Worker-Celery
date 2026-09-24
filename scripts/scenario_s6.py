@@ -5,7 +5,6 @@ exactly one claim_ok, five claim_lost, attempt_count = 1, one candidate.
 
 Usage: python3 scripts/scenario_s6.py [--keep]    (--keep leaves the batch and S3 object in place)
 """
-import sys
 import uuid
 
 import lib
@@ -39,8 +38,7 @@ def main() -> int:
                                       "Phase 8 (task 8.2)")
         lib.assert_no_undeliverable(s)
     finally:
-        if "--keep" not in sys.argv:
-            lib.cleanup(batch_id, [key])
+        lib.cleanup(s, batch_id, [key])
     return s.finish()
 
 

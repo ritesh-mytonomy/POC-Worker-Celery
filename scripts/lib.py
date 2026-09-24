@@ -21,10 +21,11 @@ class Scenario:
     """Collects PASS / FAIL / PENDING results and prints them; exit code is non-zero on any FAIL."""
 
     def __init__(self, name: str) -> None:
-        """Start a scenario run."""
+        """Start a scenario run. `--keep` on the command line skips cleanup, for debugging."""
         self.name, self.failed, self.pending = name, 0, 0
+        self.keep = "--keep" in sys.argv
         self.started = time.monotonic()
-        print(f"=== {name}")
+        print(f"=== {name}" + ("  (--keep: batch and S3 objects left in place)" if self.keep else ""))
 
     def check(self, label: str, actual: Any, expected: Any) -> bool:
         """Record actual == expected."""
@@ -166,8 +167,11 @@ def assert_no_undeliverable(scenario: Scenario) -> None:
     scenario.check("LLEN ae.undeliver", redis_llen("ae.undeliver"), 0)
 
 
-def cleanup(batch_id: str, keys: list[str]) -> None:
-    """Remove the scenario's batch (cascades to files and candidates) and its S3 objects."""
+def cleanup(scenario: Scenario, batch_id: str, keys: list[str]) -> None:
+    """Remove the scenario's batch (cascades to files and candidates) and its S3 objects, unless --keep."""
+    if scenario.keep:
+        print(f"  kept: batch {batch_id}, keys {keys}")
+        return
     user, db = os.environ.get("POSTGRES_USER", "clinsync"), os.environ.get("POSTGRES_DB", "clinsync")
     compose("exec", "-T", "postgres", "psql", "-U", user, "-d", db, "-qtAc",
             f"DELETE FROM upload_batch WHERE batch_id = '{uuid.UUID(batch_id)}'")
