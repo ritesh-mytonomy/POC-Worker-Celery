@@ -70,6 +70,10 @@ class EventLogger:
         """Log at ERROR."""
         self._log(logging.ERROR, event, False, fields)
 
+    def critical(self, event: str, **fields: Any) -> None:
+        """Log at CRITICAL."""
+        self._log(logging.CRITICAL, event, False, fields)
+
     def exception(self, event: str, **fields: Any) -> None:
         """Log at ERROR with the current exception's traceback."""
         self._log(logging.ERROR, event, True, fields)

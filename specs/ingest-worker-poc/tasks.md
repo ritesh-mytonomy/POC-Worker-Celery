@@ -189,7 +189,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `celery -A workers.celery_app inspect conf` from `worker-ingest` shows `task_acks_late: True`, `worker_prefetch_multiplier: 1`, and the three queues.
   - _Requirements: R9.1–R9.4, R13.1_
 
-- [ ] **6.2 Internal client**
+- [x] **6.2 Internal client**
   - `workers/internal_client.py` — `httpx.Client` with `X-Internal-Key`; `claim()` returns `FileClaim | None`; `with_token()` returns a bound client adding `X-Claim-Token`; 409 `claim_superseded` → `ClaimSuperseded`; 5xx and transport errors → `Transient`.
   - **Done when:** unit tests with `httpx.MockTransport` cover each mapping.
   - _Requirements: R4.1, R4.2_
