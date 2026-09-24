@@ -381,7 +381,7 @@ settings.validate()                      # R9.5 — refuse to start on a bad com
 # workers/ingest.py
 # Adapters raise one class. The S3 helper maps botocore connection errors and 5xx, and the
 # internal client maps httpx transport errors and 5xx, to engine.errors.Transient.
-RETRYABLE = (Transient, SoftTimeLimitExceeded)
+RETRYABLE = (Transient, SoftTimeLimitExceeded, OSError, MemoryError)   # rev 1.3 — see below
 LIMITS = Limits.from_settings(settings)          # engine/ takes limits as arguments, not settings
 
 @app.task(bind=True, max_retries=None)   # attempt_count, not Celery's counter, bounds attempts
@@ -419,6 +419,10 @@ def process_upload(self, file_id: str, organization_id: str) -> None:
         beat.stop()
         cleanup_tmp()
 ```
+
+**Rev 1.3 — what is retryable, and in what order.** `OSError` and `MemoryError` are environment problems (a full disk) and join `RETRYABLE`, bounded by `MAX_ATTEMPTS` like any other retry. The `except` clauses run in this order: `Rejected` → `S3ObjectNotFound` → `ClaimSuperseded` → the deliberately non-retryable `S3ConfigError` / `WorkerContractError` (incl. `InternalAuthError`), logged as `task_failed` and re-raised → `RETRYABLE` → any other exception (a bug), logged as `task_failed` and re-raised. Re-raised failures leave the file `processing`; the stale sweeper recovers it. None of the non-retryable classes subclasses `OSError`, `MemoryError` or `Transient` (tested). The heartbeat is stopped before `release`; `release` is best effort (a `Transient` there is logged and the retry still raised), and `ClaimSuperseded` during `release` stops without retrying.
+
+**S3 client timeouts** (rev 1.3). `connect_timeout=2`, `read_timeout=3`, standard retries with 2 attempts in total. With a 10 s read timeout and 3 attempts a hung S3 took 30.6 s to fail, silently absorbing a short outage; now 6.7 s (hung) or 0.9 s (unreachable), and the task's release + backoff takes over.
 
 **Why release before retry.** The retried task must claim again. Without releasing, the file stays `processing` with a fresh heartbeat and the retry would lose its own claim race.
 

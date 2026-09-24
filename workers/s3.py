@@ -22,7 +22,10 @@ from engine.errors import Transient
 
 log = get_logger(__name__)
 CHUNK = 64 * 1024
-CLIENT_CONFIG = Config(connect_timeout=2, read_timeout=10, retries={"mode": "standard", "total_max_attempts": 3})
+# Short on purpose (task 10.2): a hung S3 took 30.6 s to fail with read_timeout=10 and 3 attempts, silently
+# absorbing an outage. Now a failure surfaces in a few seconds and the task's own release + backoff takes over.
+# read_timeout is per socket read (inactivity), not the whole transfer. One botocore retry covers a 5xx blip.
+CLIENT_CONFIG = Config(connect_timeout=2, read_timeout=3, retries={"mode": "standard", "total_max_attempts": 2})
 
 NOT_FOUND = {"NoSuchKey", "404", "NotFound"}
 DENIED = {"AccessDenied", "403", "Forbidden", "InvalidAccessKeyId", "SignatureDoesNotMatch", "AllAccessDisabled",

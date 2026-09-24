@@ -1,24 +1,30 @@
-"""process_upload (design.md §8.1), process_document (§8.2) and process_archive (§8.3). Retries arrive in Phase 10."""
+"""process_upload (design.md §8.1), process_document (§8.2) and process_archive (§8.3)."""
 import os
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from app.constants import TASK_PROCESS_UPLOAD
 from app.errors import ClaimSuperseded
 from app.logging import get_logger
 from engine.archive import UNREADABLE, extract_streaming, inspect_archive
-from engine.errors import Rejected
+from engine.errors import Rejected, Transient
 from engine.file_signature import detect_file_type, mismatch_reason
 from engine.limits import Limits
 from workers.celery_app import app, settings
 from workers.heartbeat import Heartbeat
-from workers.internal_client import BoundClient, FileClaim, FinalStatus, InternalClient
-from workers.s3 import S3ObjectNotFound, S3Store
+from workers.internal_client import BoundClient, FileClaim, FinalStatus, InternalClient, WorkerContractError
+from workers.s3 import S3ConfigError, S3ObjectNotFound, S3Store
 
 log = get_logger(__name__)
 LIMITS = Limits.from_settings(settings)          # engine/ takes limits as arguments, not settings
+# R11.1. OSError and MemoryError are environment problems (a full disk) and stay retryable (rev 1.3). The
+# deliberately non-retryable errors are caught before this tuple is reached (see process_upload).
+RETRYABLE = (Transient, SoftTimeLimitExceeded, OSError, MemoryError)
+NON_RETRYABLE = (S3ConfigError, WorkerContractError)          # WorkerContractError includes InternalAuthError
 _clients: tuple[int, InternalClient, S3Store] | None = None
 
 
@@ -172,6 +178,30 @@ def process_upload(self: Any, file_id: str, organization_id: str) -> None:
         log.warning("finished", **ctx, status="error", reason="Uploaded object not found")
     except ClaimSuperseded:
         log.warning("claim_superseded", **ctx)                                # another worker owns it now
+    except NON_RETRYABLE as exc:                                              # configuration or worker bug
+        log.exception("task_failed", **ctx, retryable=False, error=repr(exc))
+        raise                                                                 # the stale sweeper recovers the file
+    except RETRYABLE as e:                                                    # R11.1
+        beat.stop()                                                           # no heartbeat after handing it back
+        if claim.attempt_count >= settings.MAX_ATTEMPTS:                      # R11.3 — last attempt: fail, don't release
+            message = f"Could not be processed after {claim.attempt_count} attempts: {e!r}"
+            api.finish(FinalStatus("error", message))
+            store.delete_quietly(claim.s3_key)
+            log.warning("finished", **ctx, status="error", reason=message)
+            return
+        try:
+            api.release(reason=repr(e))                                       # resets uploaded_at (rev 1.2)
+        except ClaimSuperseded:
+            log.warning("claim_superseded", **ctx, during="release")
+            return
+        except Transient as exc:                                              # best effort (design.md §11)
+            log.warning("release_failed", **ctx, error=repr(exc))
+        countdown = 2 ** claim.attempt_count * 5
+        log.warning("retrying", **ctx, countdown=countdown, error=repr(e))
+        raise self.retry(exc=e, countdown=countdown)
+    except Exception as exc:                                                  # a bug: log loudly, never swallow
+        log.exception("task_failed", **ctx, retryable=False, error=repr(exc))
+        raise
     finally:
         beat.stop()
         if local is not None:

@@ -117,7 +117,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** tests seed stale and fresh rows and assert only stale ones move, and exhausted ones go to `error`.
   - _Requirements: R11.4, R11.5_
 
-**Checkpoint B** — every state transition in `design.md` §5 is covered by a passing test. **Met** after task 4.4.
+**Checkpoint B** — every state transition in `design.md` §5 is covered by a passing test. **Met** after task 4.4. The one caveat — `processing → error` by the worker's own `finish(error)` on its last attempt, covered then only at repository level — is closed by task 10.2: the worker's decision is unit-tested (`tests/test_worker_retry.py::test_retryable_error_on_the_last_attempt_finishes_error_without_releasing`) and proved live (`scripts/check_retry.py` case B: exactly 3 claims, `error`, never enqueued again).
 
 ---
 
@@ -260,7 +260,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - `engine/errors.py`: `Rejected` (deterministic) and `Transient`. The S3 helper and the internal client are the only places that raise `Transient`. Map `BadZipFile` → `Rejected("Archive is damaged")`; missing `incoming/` object → finish `error`.
   - _Requirements: R11.1, R11.2_
 
-- [ ] **10.2 Release and retry**
+- [x] **10.2 Release and retry**
   - Exactly per `design.md` §8.1: on `Transient` or `SoftTimeLimitExceeded`, **if `claim.attempt_count >= MAX_ATTEMPTS` call `finish(error)`**; otherwise `release()` (which resets `uploaded_at`) then `self.retry(countdown=2 ** claim.attempt_count * 5)`.
   - **Done when:** with LocalStack stopped for **15 s** mid-task, the file retries and ends `processed` with `attempt_count ≤ 3`; with LocalStack stopped permanently, it ends `error` after exactly `MAX_ATTEMPTS` claims, with a message, and is never re-enqueued afterwards.
   - _Requirements: R11.1, R11.3_

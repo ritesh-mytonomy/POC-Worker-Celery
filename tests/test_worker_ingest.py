@@ -56,6 +56,10 @@ class FakeBound:
         if self.fail_finish:
             raise ClaimSuperseded("f")
 
+    def release(self, reason: str) -> None:
+        """Record."""
+        self.rec.calls.append(("release", reason))
+
 
 class FakeInternal:
     """Scripted claim; bound writes are recorded."""
@@ -195,10 +199,10 @@ def test_missing_incoming_object_finishes_error_without_retry(ingest: Any, monke
     assert finals(rec) == [FinalStatus("error", "Uploaded object not found")]
 
 
-@pytest.mark.parametrize("error", [Transient("S3 503"), S3ConfigError("access denied")], ids=["Transient", "S3ConfigError"])
+@pytest.mark.parametrize("error", [S3ConfigError("access denied")], ids=["S3ConfigError"])
 def test_other_s3_failures_propagate_without_finishing(ingest: Any, monkeypatch: pytest.MonkeyPatch,
                                                        error: BaseException) -> None:
-    """Transient (retry arrives in 10.x) and S3ConfigError fail the task; the file is not finished here."""
+    """S3ConfigError fails the task without finishing (Transient is retried: tests/test_worker_retry.py)."""
     rec = Recorder()
     with pytest.raises(type(error)):
         run(ingest, monkeypatch, a_claim(), FakeStore(rec, None, error), rec)

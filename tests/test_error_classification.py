@@ -84,17 +84,8 @@ def test_damaged_single_document_keeps_its_own_message(ingest: Any, monkeypatch:
     assert finals(rec) == [FinalStatus("rejected", "File is damaged and cannot be read")]
 
 
-@pytest.mark.parametrize(("error", "finished", "propagates"), [
-    (S3ObjectNotFound("gone"), [FinalStatus("error", "Uploaded object not found")], None),   # deterministic, no retry
-    (Transient("S3 503"), [], Transient),                                                  # retried (task 10.2)
-], ids=["missing incoming object", "transient"])
-def test_download_failures_are_classified(ingest: Any, monkeypatch: pytest.MonkeyPatch, error: BaseException,  # noqa: F811
-                                          finished: list[FinalStatus], propagates: type | None) -> None:
-    """Missing incoming/ object → finish error; Transient → not finished here, raised for the retry path."""
+def test_missing_incoming_object_finishes_error(ingest: Any, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    """Missing incoming/ object → finish error, no retry (Transient handling: tests/test_worker_retry.py)."""
     rec = Recorder()
-    if propagates:
-        with pytest.raises(propagates):
-            run(ingest, monkeypatch, a_claim(), FakeStore(rec, None, error), rec)
-    else:
-        run(ingest, monkeypatch, a_claim(), FakeStore(rec, None, error), rec)
-    assert finals(rec) == finished
+    run(ingest, monkeypatch, a_claim(), FakeStore(rec, None, S3ObjectNotFound("gone")), rec)
+    assert finals(rec) == [FinalStatus("error", "Uploaded object not found")] and "release" not in rec.names()
