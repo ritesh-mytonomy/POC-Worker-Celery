@@ -86,7 +86,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 3 · Data layer  ·  ~4 h
 
-- [ ] **3.1 Models and session**
+- [x] **3.1 Models and session**
   - `app/models.py` SQLAlchemy models for the three tables. `app/db.py` with `get_db_session()`.
   - **Done when:** a test inserts and reads a batch and a file.
 
