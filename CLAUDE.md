@@ -8,7 +8,8 @@ Build strictly from the spec in `specs/ingest-worker-poc/`:
 ## Rules
 - Work one task at a time, in the order in `tasks.md`.
 - A task is done only when its **Done when** holds. Run the check and show me the output.
-- Tick the task's checkbox in `tasks.md` when done. Then stop and wait for me.
+- Tick the task's checkbox in `tasks.md` when done, `git commit` with the task number
+  in the message, then `git push`. Then stop and wait for me.
 - Follow `design.md` exactly for SQL, Celery settings, and algorithms. If something
   in the spec looks wrong or ambiguous, stop and ask — do not improvise.
 - Workers never open a database connection. They call `/internal/*` on the API.
