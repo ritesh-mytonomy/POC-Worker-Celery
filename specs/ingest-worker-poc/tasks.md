@@ -117,7 +117,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** tests seed stale and fresh rows and assert only stale ones move, and exhausted ones go to `error`.
   - _Requirements: R11.4, R11.5_
 
-**Checkpoint B** — every state transition in `design.md` §5 is covered by a passing test.
+**Checkpoint B** — every state transition in `design.md` §5 is covered by a passing test. **Met** after task 4.4.
 
 ---
 
@@ -138,7 +138,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - `POST /poc/enqueue/{file_id}?times=N` — publishes `process_upload` N times without changing state. Used by S6.
   - **Done when:** `curl` returns ids and rows exist.
 
-- [ ] **4.4 Confirm and enqueue**
+- [x] **4.4 Confirm and enqueue**
   - `POST /api/v1/uploads/{file_id}/confirm`:
     - from `uploading`: set `uploaded` and `uploaded_at`, commit, **then** enqueue; return `enqueued: true`
     - from any later status: return current status, `enqueued: false`

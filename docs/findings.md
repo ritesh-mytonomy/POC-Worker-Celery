@@ -14,3 +14,9 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
   Found and fixed in 3.4 (each thread now holds one connection for its life and asserts the pid is
   unchanged after the claim). The exactly-one-winner result was unaffected: NullPool gave every thread its
   own connection regardless.
+- **`/poc/*` routes must not exist in the real build.** `/poc/seed` stands in for the presign flow and
+  `/poc/enqueue` publishes duplicate messages on demand; both are unauthenticated test aids.
+- **Lock dependencies fully in the real build, transitive ones included.** The POC pins only the direct
+  dependencies in `requirements.txt`; use a lock file (for example `pip-compile` or `uv lock`) with hashes.
+- **Confirm must be authenticated and organization-scoped in the real build** (LLD Module 1). The POC's
+  `POST /api/v1/uploads/{file_id}/confirm` is unauthenticated and accepts any `file_id`.

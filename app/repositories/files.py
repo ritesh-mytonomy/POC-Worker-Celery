@@ -178,3 +178,33 @@ def file_exists(session: Session, file_id: uuid.UUID) -> tuple[uuid.UUID, str] |
                           {"id": file_id}).one_or_none()
     session.rollback()                   # read-only; end the transaction
     return (row.organization_id, row.status) if row else None
+
+
+_CONFIRM_SQL = text("""
+UPDATE upload_file
+SET status = 'uploaded', uploaded_at = now(), updated_at = now()
+WHERE file_id = :file_id AND status = 'uploading'
+RETURNING organization_id
+""")
+
+
+@dataclass(frozen=True)
+class ConfirmResult:
+    """Outcome of confirm_upload: the status now, and whether this call made the transition."""
+
+    status: str
+    organization_id: uuid.UUID
+    transitioned: bool
+
+
+def confirm_upload(session: Session, file_id: uuid.UUID) -> ConfirmResult | None:
+    """Move uploading → uploaded in one conditional UPDATE and commit; None if the file does not exist (R2.1, R2.5)."""
+    row = session.execute(_CONFIRM_SQL, {"file_id": file_id}).one_or_none()
+    if row is not None:
+        session.commit()
+        return ConfirmResult("uploaded", row.organization_id, transitioned=True)
+    # Already past uploading (or unknown): read the current status for the response only; nothing is written.
+    current = session.execute(text("SELECT status, organization_id FROM upload_file WHERE file_id = :id"),
+                              {"id": file_id}).one_or_none()
+    session.rollback()
+    return ConfirmResult(current.status, current.organization_id, transitioned=False) if current else None

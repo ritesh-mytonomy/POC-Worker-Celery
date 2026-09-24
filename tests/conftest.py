@@ -5,6 +5,7 @@ Database tests skip when PostgreSQL is unreachable, unless REQUIRE_DB=1, in whic
 import os
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from sqlalchemy import Connection, Engine, create_engine, text
@@ -55,9 +56,9 @@ def db_session(pg_connection: Connection) -> Iterator[Session]:
         transaction.rollback()
 
 
-@pytest.fixture
-def committed_file() -> Iterator[uuid.UUID]:
-    """Commit a batch with one `uploaded` file, visible to every connection; delete it afterwards."""
+@contextmanager
+def _committed_file(status: str) -> Iterator[uuid.UUID]:
+    """Commit a batch with one file in `status`, visible to every connection; delete it afterwards."""
     connect_or_skip().close()
     engine = get_engine()
     with engine.begin() as conn:
@@ -69,15 +70,30 @@ def committed_file() -> Iterator[uuid.UUID]:
             text("""INSERT INTO upload_file (batch_id, organization_id, file_name, file_ext, is_archive,
                                              s3_key, status, uploaded_at)
                     SELECT batch_id, organization_id, 'race.docx', 'docx', false,
-                           'ClinSync/incoming/race.docx', 'uploaded', now()
+                           'ClinSync/incoming/race.docx', :status,
+                           CASE WHEN :confirmed THEN now() END
                     FROM upload_batch WHERE batch_id = :b RETURNING file_id"""),
-            {"b": batch_id},
+            {"b": batch_id, "status": status, "confirmed": status != "uploading"},
         ).scalar_one()
     try:
         yield file_id
     finally:
         with engine.begin() as conn:     # ON DELETE CASCADE removes the file and any candidates
             conn.execute(text("DELETE FROM upload_batch WHERE batch_id = :b"), {"b": batch_id})
+
+
+@pytest.fixture
+def committed_file() -> Iterator[uuid.UUID]:
+    """A committed `uploaded` file (confirmed, not yet claimed)."""
+    with _committed_file("uploaded") as file_id:
+        yield file_id
+
+
+@pytest.fixture
+def committed_uploading_file() -> Iterator[uuid.UUID]:
+    """A committed `uploading` file (seeded, not yet confirmed)."""
+    with _committed_file("uploading") as file_id:
+        yield file_id
 
 
 @pytest.fixture

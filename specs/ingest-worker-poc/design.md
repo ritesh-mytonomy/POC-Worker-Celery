@@ -302,7 +302,8 @@ producer.conf.update(
     task_publish_retry=False,                         # R2.4 — fail fast, the sweeper recovers
     broker_connection_retry=False,
     broker_connection_timeout=1,
-    broker_transport_options={"socket_connect_timeout": 1, "socket_timeout": 1},
+    broker_transport_options={"socket_connect_timeout": 1, "socket_timeout": 1,
+                              "max_retries": 0},                # rev 1.3 — no reconnect loop on publish
 )
 
 def enqueue_process_upload(file_id: str, organization_id: str) -> None:
@@ -311,7 +312,7 @@ def enqueue_process_upload(file_id: str, organization_id: str) -> None:
                        queue=QUEUE_INGEST)
 ```
 
-Celery's publish defaults retry and can block for seconds when Redis is down, breaking R2.4. With these settings a confirm during an outage fails the publish in about a second; the file stays `uploaded` and the reconcile sweeper recovers it.
+Celery's publish defaults retry and can block for seconds when Redis is down, breaking R2.4. **`max_retries: 0`** (rev 1.3): before publishing, Kombu ensures the connection, retrying with a 2 s starting interval until `broker_connection_timeout`; `task_publish_retry` and `broker_connection_retry` do not govern that loop. With Redis stopped (its hostname stops resolving) a confirm took 2.3 s without it and 0.1 s with it. **Producer only:** the workers' Celery app (§7) keeps Kombu's default retries so it reconnects when Redis comes back. With these settings a confirm during an outage fails the publish in about a second; the file stays `uploaded` and the reconcile sweeper recovers it.
 
 ### 6.3 Queue contract
 
@@ -781,7 +782,7 @@ Assert: all three files `processed` · the reconcile sweeper logged `requeued �
 
 The Redis volume must be named `redis-data` in `docker-compose.yml`, and the compose project named `clinsync-ingest-poc`, so step 5 can address it.
 
-> **Why not `FLUSHALL`.** Kombu's Redis transport keeps queue routing in `_kombu.binding.*` keys. Flushing a live broker deletes them while every client still believes its queues are declared, so published messages match no binding and are diverted to the `ae.undeliver` list — silently. Consumers never see them and the reconcile sweeper's re-enqueues vanish the same way. Never `FLUSHALL` a live broker. If `ae.undeliver` is non-empty after this scenario, the API's producer kept its declaration cache across the reconnect: reset its connection pool in the enqueue error path (`app.pool.force_close_all()`) and re-run.
+> **Why not `FLUSHALL`.** Kombu's Redis transport keeps queue routing in `_kombu.binding.*` keys. Flushing a live broker deletes them while every client still believes its queues are declared, so published messages match no binding and are diverted to the `ae.undeliver` list — silently. Consumers never see them and the reconcile sweeper's re-enqueues vanish the same way. Never `FLUSHALL` a live broker. If `ae.undeliver` is non-empty after this scenario, the API's producer kept its declaration cache across the reconnect: reset its connection pool in the enqueue error path and re-run. **Rev 1.3:** the producer is now reset after **every** failed publish, with `kombu.pools.reset()` plus discarding the producer instance. A bare `app.pool.force_close_all()` closes the pool for good, and Kombu's process-wide pool registry hands that closed pool to any new producer for the same broker, so every later publish fails with `Acquire on closed pool`.
 
 ---
 

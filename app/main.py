@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.logging import configure_logging, get_logger
-from app.routes import internal, poc
+from app.routes import internal, poc, uploads
 from app.routes.errors import install_error_handlers
 
 configure_logging()
@@ -29,6 +29,7 @@ app = FastAPI(title="ClinSync Ingest POC", lifespan=lifespan)
 install_error_handlers(app)
 app.include_router(internal.router)
 app.include_router(poc.router)
+app.include_router(uploads.router)
 
 
 @app.get("/health")
