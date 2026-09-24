@@ -46,7 +46,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `docker build .` succeeds.
   - _Requirements: R1.3_
 
-- [ ] **1.2 PostgreSQL schema**
+- [x] **1.2 PostgreSQL schema**
   - Write `infra/postgres/init.sql` exactly as `design.md` §4.
   - Mount into `/docker-entrypoint-initdb.d/`.
   - **Done when:** `docker compose up postgres` then `\d staged_document` shows `uq_entry` with `NULLS NOT DISTINCT`.
