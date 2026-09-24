@@ -5,12 +5,21 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.config import get_settings
+from app.logging import configure_logging, get_logger
+
+configure_logging()
+log = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Refuse to start on an invalid configuration (R9.5)."""
-    get_settings().validate()
+    try:
+        get_settings().validate()
+    except ValueError as exc:
+        log.error("invalid_configuration", error=str(exc))
+        raise
+    log.info("api_started")
     yield
 
 

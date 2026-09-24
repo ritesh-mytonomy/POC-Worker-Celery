@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     POSTGRES_USER: str = "clinsync"
     POSTGRES_PASSWORD: str = "clinsync"
     POSTGRES_DB: str = "clinsync"
+    POSTGRES_HOST: str = "postgres"
+    POSTGRES_PORT: int = 5432
     DATABASE_URL: str | None = None
 
     @field_validator("ALLOWED_ZIP_ENTRY_EXT", "ALLOWED_TOP_LEVEL_EXT", mode="before")
@@ -65,7 +67,7 @@ class Settings(BaseSettings):
         if not self.DATABASE_URL:
             self.DATABASE_URL = (
                 f"postgresql+psycopg://{quote(self.POSTGRES_USER, safe='')}:"
-                f"{quote(self.POSTGRES_PASSWORD, safe='')}@postgres:5432/{self.POSTGRES_DB}"
+                f"{quote(self.POSTGRES_PASSWORD, safe='')}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
             )
         return self
 

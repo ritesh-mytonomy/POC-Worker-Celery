@@ -77,7 +77,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** a unit test for each invalid combination asserts it raises; setting `VISIBILITY_TIMEOUT=100` in `.env` makes both `api` and `worker-ingest` exit on start.
   - _Requirements: R9.4, R9.5_
 
-- [ ] **2.2 JSON logging**
+- [x] **2.2 JSON logging**
   - `app/logging.py`: one JSON object per line with `ts`, `level`, `event`, plus any `extra`. Used by API and workers.
   - **Done when:** `docker compose logs api` shows JSON lines with `event`.
   - _Requirements: R15.1_

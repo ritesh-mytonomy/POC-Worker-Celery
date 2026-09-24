@@ -56,6 +56,12 @@ def test_database_url_built_from_postgres_values() -> None:
     assert s.DATABASE_URL == "postgresql+psycopg://u:p%40ss%2Fword@postgres:5432/d"
 
 
+def test_database_url_uses_postgres_host_and_port() -> None:
+    """POSTGRES_HOST and POSTGRES_PORT feed the built DATABASE_URL."""
+    s = make(POSTGRES_HOST="localhost", POSTGRES_PORT=15432)
+    assert s.DATABASE_URL == "postgresql+psycopg://clinsync:clinsync@localhost:15432/clinsync"
+
+
 def test_explicit_database_url_wins() -> None:
     """An explicit DATABASE_URL is used as-is."""
     url = "postgresql+psycopg://x:y@db.example:5432/z"
