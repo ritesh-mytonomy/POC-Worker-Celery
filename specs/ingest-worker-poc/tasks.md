@@ -160,7 +160,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - `fixtures/make_fixtures.py` builds every fixture in `design.md` §10.1 into `fixtures/out/`.
   - `encrypted.zip`: write normally, then set `flag_bits |= 0x1` on the `ZipInfo` in both local header and central directory.
   - `lying.zip`: write one entry, then patch its declared uncompressed size in the central directory to a smaller value.
-  - **Done when:** running it produces all nine files.
+  - **Done when:** running it produces all ten files.
 
 - [x] **5.2 `detect_file_type`**
   - Per `design.md` §8.4. Returns a `Detection`; **never raises** for bad content. Takes a `Limits` argument — see `engine/limits.py`.

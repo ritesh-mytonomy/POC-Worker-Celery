@@ -12,7 +12,8 @@ from engine.limits import Limits
 CHUNK = 64 * 1024                        # R6.7 — at most 64 KB per read
 
 # How zipfile reports content that does not match its index, beyond BadZipFile: a broken deflate stream,
-# a truncated member, an unsupported compression method, a zip64 record it cannot handle.
+# a truncated member, an unsupported compression method, a zip64 record it cannot handle. FORMAT errors only:
+# OSError and MemoryError are environment problems (a full disk) and must stay retryable, never Rejected.
 UNREADABLE = (zipfile.BadZipFile, zipfile.LargeZipFile, zlib.error, EOFError, NotImplementedError)
 
 

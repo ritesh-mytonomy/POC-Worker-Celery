@@ -204,13 +204,14 @@ def test_unreadable_member_mid_stream_is_rejected_and_cleaned_up(tmp_path: Path,
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize("error", [OSError("disk full"), KeyboardInterrupt(), MemoryError()],
+@pytest.mark.parametrize("error", [OSError(28, "No space left on device"), KeyboardInterrupt(), MemoryError()],
                          ids=["OSError", "KeyboardInterrupt", "MemoryError"])
 def test_any_other_failure_propagates_unchanged_and_cleans_up(tmp_path: Path, error: BaseException) -> None:
-    """Non-content failures (including SoftTimeLimitExceeded-style interrupts) propagate as-is; no temp file."""
+    """Environment failures stay retryable: propagated as-is, never Rejected (rev 1.3); no temp file."""
     stream = RecordingStream(bytes(300 * 1024), fail_after=2, error=error)
-    with pytest.raises(type(error)):
+    with pytest.raises(type(error)) as exc:
         extract_streaming(FakeZip(stream), entry("a.docx", 300 * 1024), tmp_dir=tmp_path)  # type: ignore[arg-type]
+    assert not isinstance(exc.value, Rejected)
     assert list(tmp_path.iterdir()) == []
 
 

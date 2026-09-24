@@ -10,6 +10,7 @@ from engine.limits import Limits
 ZIP = b"PK\x03\x04"
 PDF = b"%PDF-"
 WORDML = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+CONTENT_TYPES_READ = 64 * 1024           # the WordML type sits near the start; never load the whole part (NFR-4)
 
 
 @dataclass(frozen=True)
@@ -21,7 +22,11 @@ class Detection:
 
 
 def detect_file_type(path: Path, limits: Limits) -> Detection:
-    """Return what the file's bytes are, regardless of its name. Never raises for bad content."""
+    """Return what the file's bytes are, regardless of its name. Never raises for bad content.
+
+    Only format errors (UNREADABLE) mean corrupt. Environment errors such as OSError or MemoryError propagate,
+    so the caller retries them instead of rejecting a good file.
+    """
     with path.open("rb") as f:
         head = f.read(8)
     if head.startswith(PDF):
@@ -33,7 +38,9 @@ def detect_file_type(path: Path, limits: Limits) -> Detection:
             inspect_archive(zf, limits)              # R5.5 — a .docx is a zip; guard it too
             names = set(zf.namelist())
             if {"[Content_Types].xml", "word/document.xml"} <= names:
-                if WORDML in zf.read("[Content_Types].xml").decode("utf-8", "ignore"):
+                with zf.open("[Content_Types].xml") as part:
+                    head = part.read(CONTENT_TYPES_READ)
+                if WORDML in head.decode("utf-8", "ignore"):
                     return Detection("docx")
             return Detection("zip")
     except Rejected as r:

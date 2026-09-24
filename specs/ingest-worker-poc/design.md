@@ -532,12 +532,14 @@ def detect_file_type(path: Path, limits: Limits) -> Detection:
             inspect_archive(zf, limits)              # R5.5 — a .docx is a zip; guard it too
             names = set(zf.namelist())
             if {"[Content_Types].xml", "word/document.xml"} <= names:
-                if WORDML in zf.read("[Content_Types].xml").decode("utf-8", "ignore"):
+                with zf.open("[Content_Types].xml") as part:
+                    head = part.read(64 * 1024)      # rev 1.3 — bounded; never load the whole part
+                if WORDML in head.decode("utf-8", "ignore"):
                     return Detection("docx")
             return Detection("zip")
     except Rejected as r:
         return Detection("unsafe", str(r))
-    except zipfile.BadZipFile as exc:
+    except UNREADABLE as exc:                        # rev 1.3 — format errors only, see below
         return Detection("corrupt", str(exc))
 
 def mismatch_reason(declared: str, d: Detection) -> str:
@@ -550,6 +552,10 @@ def mismatch_reason(declared: str, d: Detection) -> str:
 ```
 
 A `.docx` and a `.zip` share the signature `PK\x03\x04`. Only the contents distinguish them.
+
+**`UNREADABLE`** (rev 1.3) = `BadZipFile`, `LargeZipFile`, `zlib.error`, `EOFError`, `NotImplementedError` — every way `zipfile` reports a **format** problem. With `BadZipFile` alone, a damaged deflate stream escaped as `zlib.error` and an unknown compression method as `NotImplementedError`. Only format errors mean `corrupt` (here) or `Rejected` (in `extract_streaming`). **`OSError` and `MemoryError` are environment problems** — a full disk must not permanently reject a good file — so they propagate and stay retryable.
+
+**Bounded read** (rev 1.3). Only the first 64 KB of `[Content_Types].xml` is read. The part could otherwise be hundreds of MB while passing every guard (ratio 200 allows ~400 MB from 2 MB), breaking NFR-4. The WordML content type always appears near the start.
 
 **Detection classifies; it never raises for bad content.** A `.docx` that fails its own guards returns `unsafe`, and one that cannot be read returns `corrupt`. The caller decides what that means:
 
@@ -595,10 +601,10 @@ def extract_streaming(zf, e, chunk: int = 64 * 1024) -> Path:
                 if total > e.file_size:          # defence in depth — CPython already truncates
                     raise Rejected(f"'{e.filename}' is larger than its index claims")
                 dst.write(block)
-    except zipfile.BadZipFile as exc:            # R6.8 — how a lying index actually surfaces
+    except UNREADABLE as exc:                    # R6.8 — how a lying index actually surfaces (rev 1.3: §8.4)
         out.unlink(missing_ok=True)
         raise Rejected(f"'{e.filename}' does not match its index ({exc})") from exc
-    except BaseException:
+    except BaseException:                        # incl. OSError, MemoryError: propagate, stay retryable
         out.unlink(missing_ok=True)              # never leave a partial temp file
         raise
     return out

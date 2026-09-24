@@ -3,12 +3,15 @@ import shutil
 import struct
 import subprocess
 import sys
+import tracemalloc
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from engine.file_signature import Detection, detect_file_type, mismatch_reason
+from engine import file_signature
+from engine.file_signature import WORDML, Detection, detect_file_type, mismatch_reason
 from tests.engine_helpers import POC_LIMITS, write_zip
 
 
@@ -136,3 +139,41 @@ def test_engine_imports_no_framework_and_no_settings() -> None:
             "'pydantic_settings'}; print(sorted({m.split('.')[0] for m in sys.modules} & bad))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
     assert out.strip() == "[]"
+
+
+
+# --- rev 1.3: environment errors stay retryable; the content-types read is bounded ---
+
+@pytest.mark.parametrize("error", [OSError(28, "No space left on device"), MemoryError()], ids=["OSError", "MemoryError"])
+def test_environment_errors_propagate_not_corrupt(fixtures_dir: Path, monkeypatch: pytest.MonkeyPatch,
+                                                  error: BaseException) -> None:
+    """A full disk or out-of-memory while reading is not a verdict on the file: it propagates, never corrupt."""
+    class Broken:
+        def __init__(self, *_: object, **__: object) -> None:
+            raise error
+
+    monkeypatch.setattr(file_signature.zipfile, "ZipFile", Broken)
+    with pytest.raises(type(error)):
+        detect(fixtures_dir / "valid.docx")
+
+
+def test_content_types_read_is_bounded(tmp_path: Path) -> None:
+    """A 50 MB [Content_Types].xml is not loaded: detection still says docx, with a small memory peak (NFR-4)."""
+    body = f"<Types><Override ContentType=\"{WORDML}\"/>".encode() + b" " * (50 * 1024 * 1024) + b"</Types>"
+    path = write_zip(tmp_path / "big_types.docx", [("[Content_Types].xml", body), ("word/document.xml", b"<d/>")])
+    roomy = replace(POC_LIMITS, max_compression_ratio=10_000)   # allow the highly compressible padding
+    tracemalloc.start()
+    try:
+        d = detect_file_type(path, roomy)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert d == Detection("docx")
+    assert peak < 4 * 1024 * 1024, f"peak {peak / 1024 / 1024:.1f} MB"
+
+
+def test_wordml_type_beyond_the_first_64_kb_is_not_docx(tmp_path: Path) -> None:
+    """Documented consequence of the bounded read: a content type hidden after 64 KB reads as a plain zip."""
+    body = b"<Types>" + b" " * (70 * 1024) + f"<Override ContentType=\"{WORDML}\"/></Types>".encode()
+    path = write_zip(tmp_path / "late.docx", [("[Content_Types].xml", body), ("word/document.xml", b"<d/>")])
+    assert detect_file_type(path, replace(POC_LIMITS, max_compression_ratio=10_000)) == Detection("zip")
