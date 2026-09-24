@@ -4,7 +4,6 @@ import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-from typing import Any
 
 import pytest
 from sqlalchemy import Engine, create_engine, text
@@ -12,8 +11,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
-from app.models import UploadBatch, UploadFile
 from app.repositories.files import FileClaim, claim
+from tests.db_helpers import db_row, make_file, set_heartbeat_age
 
 MAX_ATTEMPTS = 3
 STALE = 30                               # the POC value; never 0 in the race (see claim() docstring)
@@ -23,36 +22,6 @@ ClaimFn = Callable[..., FileClaim | None]
 def claim_now(session: Session, file_id: uuid.UUID) -> FileClaim | None:
     """Call claim() with the test limits."""
     return claim(session, file_id, max_attempts=MAX_ATTEMPTS, stale_after_seconds=STALE)
-
-
-def make_file(session: Session, status: str = "uploaded", attempt_count: int = 0) -> uuid.UUID:
-    """Insert a batch and one file with the given status and attempt count; return file_id."""
-    org = uuid.uuid4()
-    batch = UploadBatch(organization_id=org)
-    session.add(batch)
-    session.flush()
-    upload = UploadFile(batch_id=batch.batch_id, organization_id=org, file_name="a.docx", file_ext="docx",
-                        is_archive=False, s3_key="ClinSync/incoming/a.docx", status=status,
-                        attempt_count=attempt_count)
-    session.add(upload)
-    session.flush()
-    return upload.file_id
-
-
-def set_heartbeat_age(session: Session, file_id: uuid.UUID, age_seconds: int) -> None:
-    """Mark the file processing with a heartbeat `age_seconds` old, by backdating it in the database."""
-    session.execute(
-        text("UPDATE upload_file SET status = 'processing', heartbeat_at = now() - make_interval(secs => :age) "
-             "WHERE file_id = :id"),
-        {"age": age_seconds, "id": file_id},
-    )
-
-
-def db_row(session: Session, file_id: uuid.UUID) -> Any:
-    """Read the file's status, attempt_count and claim_token."""
-    return session.execute(
-        text("SELECT status, attempt_count, claim_token FROM upload_file WHERE file_id = :id"), {"id": file_id}
-    ).one()
 
 
 # --- single-connection cases (rolled back after each test) ---

@@ -101,7 +101,7 @@ Estimates are rough, for one developer familiar with FastAPI.
     - **10 threads** claim one `uploaded` file concurrently → exactly **1** non-`None`
   - _Requirements: R3.2, R3.3, R3.5_
 
-- [ ] **3.3 Fenced writes**
+- [x] **3.3 Fenced writes**
   - `heartbeat`, `progress`, `finish`, `release` — each `UPDATE … WHERE claim_token = :token AND status = 'processing'`; raise `ClaimSuperseded` on 0 rows.
   - `finish` sets terminal status and clears `claim_token`. `release` sets `uploaded` and clears it.
   - **Done when:** tests show each write succeeds with the current token and raises with an old token after a stale takeover.
