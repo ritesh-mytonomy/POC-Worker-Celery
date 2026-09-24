@@ -10,6 +10,11 @@ from engine.errors import Rejected
 from engine.limits import Limits
 
 CHUNK = 64 * 1024                        # R6.7 — at most 64 KB per read
+# R6.10 (rev 1.3). Bytes, not characters: S3 keys are limited to 1024 UTF-8 bytes and non-ASCII characters take
+# 2–4 bytes. A 255-byte file name keeps the staging key (~133 bytes of prefix) far inside that; the full entry
+# name must also fit staged_document.source_entry_name, VARCHAR(1024).
+MAX_NAME_BYTES = 255
+MAX_ENTRY_NAME_CHARS = 1024
 
 # How zipfile reports content that does not match its index, beyond BadZipFile: a broken deflate stream,
 # a truncated member, an unsupported compression method, a zip64 record it cannot handle. FORMAT errors only:
@@ -34,6 +39,10 @@ def inspect_archive(zf: zipfile.ZipFile, limits: Limits) -> list[zipfile.ZipInfo
         if e.filename in seen:
             raise Rejected(f"'{e.filename}' appears more than once")                             # R6.9 (rev 1.3)
         seen.add(e.filename)
+        if len(PurePosixPath(e.filename).name.encode("utf-8")) > MAX_NAME_BYTES:
+            raise Rejected(f"'{e.filename}' has a file name longer than {MAX_NAME_BYTES} bytes")  # R6.10 (rev 1.3)
+        if len(e.filename) > MAX_ENTRY_NAME_CHARS:
+            raise Rejected(f"'{e.filename[:80]}…' has a path longer than {MAX_ENTRY_NAME_CHARS} characters")
     return entries
 
 

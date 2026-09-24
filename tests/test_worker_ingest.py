@@ -101,6 +101,15 @@ class FakeStore:
         """Record."""
         self.rec.calls.append(("delete", key))
 
+    def upload(self, path: Path, key: str) -> None:
+        """Record."""
+        self.rec.calls.append(("upload", key))
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Record."""
+        self.rec.calls.append(("delete_prefix", prefix))
+        return 0
+
 
 def a_claim(file_name: str = "valid.docx", is_archive: bool = False) -> FileClaim:
     """A FileClaim for a fresh file."""
@@ -215,14 +224,16 @@ def test_superseded_at_finish_is_logged_and_incoming_kept(ingest: Any, monkeypat
     assert "delete" not in rec.names()
 
 
-def test_archive_is_a_placeholder_until_phase_9(ingest: Any, monkeypatch: pytest.MonkeyPatch, fixtures_dir: Path,
-                                                tmp_path: Path) -> None:
-    """Until task 9.1, an archive finishes error with a message saying so."""
+def test_archive_goes_through_process_archive_then_finish_then_delete(ingest: Any, monkeypatch: pytest.MonkeyPatch,
+                                                                      fixtures_dir: Path, tmp_path: Path) -> None:
+    """mixed.zip: 3 entries uploaded, 2 rejected, finish(partial), then the incoming object is deleted."""
     rec = Recorder()
     store = FakeStore(rec, Path(shutil.copy(fixtures_dir / "mixed.zip", tmp_path)))
-    run(ingest, monkeypatch, a_claim("mixed.zip", is_archive=True), store, rec)
-    (final,) = finals(rec)
-    assert final.status == "error" and "9.1" in (final.message or "")
+    claim = a_claim("mixed.zip", is_archive=True)
+    run(ingest, monkeypatch, claim, store, rec)
+    assert finals(rec) == [FinalStatus("partial")]
+    assert sum(n == "upload" for n in rec.names()) == 3 and sum(n == "upsert_candidate" for n in rec.names()) == 5
+    assert rec.names()[-1] == "delete" and rec.names().index("finish") < rec.names().index("delete")
 
 
 def test_heartbeat_thread_is_stopped_when_the_task_ends(ingest: Any, monkeypatch: pytest.MonkeyPatch,

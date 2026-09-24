@@ -233,7 +233,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 9 · Archive and resume  ·  ~4 h
 
-- [ ] **9.1 `process_archive`**
+- [x] **9.1 `process_archive`**
   - Per `design.md` §8.3, including the outer `detect_file_type` check, skip-first-N, per-entry `progress`, deterministic keys `…/{file_id}/{index:04d}_{name}`, delete-prefix-then-reraise on archive-level `Rejected`, and `poc_delay()` reading `ENTRY_DELAY_SECONDS`.
   - **Done when:** a unit test with a fake internal client and `claim.entries_done = 3` on a 5-entry archive records upserts for indices 3 and 4 only, then `progress(entries_done=5)`.
   - _Requirements: R7.1–R7.6, R8.1, R8.2_

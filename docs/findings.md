@@ -24,3 +24,7 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
   per broker in a process-wide registry, so a new producer for the same broker gets the closed pool back and every
   publish fails with `Acquire on closed pool`. After a failed publish, call `kombu.pools.reset()` and rebuild the
   producer (found in 4.4's live check; regression test `test_publish_works_again_after_a_failed_publish`).
+- **The dummy AWS credentials must never reach production.** Compose defaults `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY` to `test` so boto3 can sign requests to LocalStack; production must use an IAM role.
+- **`AWS_ENDPOINT_URL` must be absent in production.** boto3 (1.28+) reads that environment variable by itself,
+  so even with the setting unset it would redirect every S3 call if the variable leaked into the environment.

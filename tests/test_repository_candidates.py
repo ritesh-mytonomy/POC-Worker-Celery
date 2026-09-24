@@ -243,3 +243,15 @@ def test_upsert_waits_for_in_flight_takeover_then_raises(race_engine: Engine, co
     assert isinstance(outcome.get("result"), ClaimSuperseded), f"upsert returned {outcome.get('result')!r}"
     with Session(race_engine) as session:
         assert candidates(session, committed_file) == []
+
+
+def test_non_ascii_entry_name_is_stored_exactly(db_session: Session) -> None:
+    """A name with spaces and non-ASCII characters round-trips through the upsert unchanged."""
+    file_id, token = claimed(db_session)
+    name = "Kardiologie/Überblick Herz 2026.docx"
+    upsert(db_session, file_id, token, source_entry_name=name, entry_index=0, file_name="Überblick Herz 2026.docx",
+           file_ext="docx", status="processed", s3_key="ClinSync/staging/k/0000_Überblick Herz 2026.docx",
+           size_bytes=1)
+    (row,) = candidates(db_session, file_id)
+    assert row["source_entry_name"] == name and row["file_name"] == "Überblick Herz 2026.docx"
+    assert row["s3_key"].endswith("0000_Überblick Herz 2026.docx")

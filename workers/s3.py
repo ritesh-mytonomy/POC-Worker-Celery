@@ -119,3 +119,20 @@ class S3Store:
             self.client.delete_object(Bucket=self.bucket, Key=key)
         except Exception as exc:
             log.warning("s3_delete_failed", key=key, error=repr(exc))
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under prefix (design.md §8.5a step 1); return how many. Errors map as above."""
+        deleted = 0
+        try:
+            paginator = self.client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+                keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+                for start in range(0, len(keys), 1000):
+                    batch = keys[start:start + 1000]
+                    result = self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": batch, "Quiet": True})
+                    if result.get("Errors"):
+                        raise Transient(f"S3 could not delete {len(result['Errors'])} objects under {prefix}")
+                    deleted += len(batch)
+        except (ClientError, BotoCoreError) as exc:
+            raise map_error(exc, prefix) from exc
+        return deleted

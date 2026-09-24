@@ -1,11 +1,14 @@
-"""process_upload (design.md §8.1) and process_document (§8.2). Archives arrive in Phase 9, retries in Phase 10."""
+"""process_upload (design.md §8.1), process_document (§8.2) and process_archive (§8.3). Retries arrive in Phase 10."""
 import os
-from pathlib import Path
+import time
+import zipfile
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from app.constants import TASK_PROCESS_UPLOAD
 from app.errors import ClaimSuperseded
 from app.logging import get_logger
+from engine.archive import extract_streaming, inspect_archive
 from engine.errors import Rejected
 from engine.file_signature import detect_file_type, mismatch_reason
 from engine.limits import Limits
@@ -62,6 +65,70 @@ def process_document(api: BoundClient, claim: FileClaim, path: Path, limits: Lim
     return FinalStatus("processed")
 
 
+def poc_delay() -> None:
+    """POC only: pause ENTRY_DELAY_SECONDS after each entry so concurrency and kills are observable."""
+    if settings.ENTRY_DELAY_SECONDS > 0:
+        time.sleep(settings.ENTRY_DELAY_SECONDS)
+
+
+def _process_entry(api: BoundClient, claim: FileClaim, zf: zipfile.ZipFile, e: zipfile.ZipInfo, i: int,
+                   limits: Limits, store: S3Store) -> bool:
+    """Handle one archive entry (R7.2–R7.4); return True if it was rejected. Archive-level problems raise Rejected."""
+    name = PurePosixPath(e.filename).name
+    ext = PurePosixPath(name).suffix.lower().lstrip(".")
+
+    def reject(reason: str) -> bool:
+        api.upsert_candidate(entry_name=e.filename, entry_index=i, file_name=name, file_ext=ext[:10],
+                             status="rejected", reject_reason=reason)
+        log.info("entry_rejected", file_id=str(claim.file_id), attempt=claim.attempt_count, entry_index=i,
+                 entry=e.filename, reason=reason)
+        return True
+
+    if not ext:
+        return reject("Files without an extension are not supported")
+    if ext not in limits.allowed_entry_ext:                               # R7.2 — not stored
+        return reject(f".{ext} is not supported")
+    tmp = extract_streaming(zf, e)                                        # R6.7, R6.8 — outer CRC → archive-level
+    try:
+        d = detect_file_type(tmp, limits)                                 # inner problems → entry-level
+        if d.type != ext:                                                 # R7.3 — not stored
+            return reject(mismatch_reason(ext, d))
+        key = staging_key(claim, index=i, name=name)
+        store.upload(tmp, key)
+        api.upsert_candidate(entry_name=e.filename, entry_index=i, file_name=name, file_ext=ext,
+                             size_bytes=e.file_size, s3_key=key, status="processed")   # R7.4
+        log.info("entry_staged", file_id=str(claim.file_id), attempt=claim.attempt_count, entry_index=i,
+                 entry=e.filename, s3_key=key)
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)                                       # every path, not only success (rev 1.3)
+
+
+def process_archive(api: BoundClient, claim: FileClaim, path: Path, beat: Heartbeat, limits: Limits,
+                    store: S3Store) -> FinalStatus:
+    """Verify an archive and stage its entries, resuming after entries_done (R7, R8.1, R8.2)."""
+    outer = detect_file_type(path, limits)                       # is it really an archive?
+    api.progress(detected_type=outer.type)
+    if outer.type != "zip":
+        raise Rejected(mismatch_reason("zip", outer))            # e.g. a .docx renamed .zip
+    try:
+        with zipfile.ZipFile(path) as zf:
+            entries = inspect_archive(zf, limits)                # R6 — archive-level
+            api.progress(entries_total=len(entries))             # R7.1
+            rejected_any = False
+            for i, e in enumerate(entries):                      # R7.5 — directory order
+                if i < claim.entries_done:                       # R8.2 — resume
+                    continue
+                beat.raise_if_superseded()                       # stop fast if ownership lost
+                rejected_any |= _process_entry(api, claim, zf, e, i, limits, store)
+                api.progress(entries_done=i + 1)                 # R8.1 — after, never before
+                poc_delay()                                      # ENTRY_DELAY_SECONDS — POC only
+    except Rejected:                                             # §8.5a — archive-level only
+        store.delete_prefix(staging_prefix(claim))               # delete FIRST, then finish (in process_upload)
+        raise
+    return FinalStatus("partial" if rejected_any else "processed")   # R7.6
+
+
 @app.task(bind=True, max_retries=None, name=TASK_PROCESS_UPLOAD)  # attempt_count, not Celery's counter, bounds attempts
 def process_upload(self: Any, file_id: str, organization_id: str) -> None:
     """Verify an uploaded file and stage whatever it contains."""
@@ -80,7 +147,7 @@ def process_upload(self: Any, file_id: str, organization_id: str) -> None:
         local = store.download_to_tmp(claim.s3_key)                           # heartbeat keeps running
         beat.raise_if_superseded()
         if claim.is_archive:
-            final = FinalStatus("error", "Archive processing is not implemented yet (task 9.1)")   # Phase 9
+            final = process_archive(api, claim, local, beat, LIMITS, store)
         else:
             final = process_document(api, claim, local, LIMITS, store)
         api.finish(final)                                                     # R10.3

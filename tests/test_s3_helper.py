@@ -210,3 +210,29 @@ def test_round_trip_through_localstack(localstack: S3Store, tmp_path: Path) -> N
         localstack.download_to_tmp(src_key, tmp_dir=tmp_path)
     with pytest.raises(S3ObjectNotFound):
         localstack.copy(src_key, dst_key)
+
+
+def test_archive_staging_keys_through_localstack(localstack: S3Store, tmp_path: Path) -> None:
+    """Keys with spaces, non-ASCII and a shared basename (by index) round-trip; delete_prefix removes them all."""
+    prefix = f"ClinSync/staging/{uuid.uuid4()}/{uuid.uuid4()}/{uuid.uuid4()}/"
+    names = ["0000_overview.docx", "0001_overview.docx", "0002_Überblick Herz 2026.docx", "0003_心脏 概述.docx"]
+    local = tmp_path / "doc.bin"
+    for name in names:
+        local.write_bytes(name.encode("utf-8"))
+        localstack.upload(local, prefix + name)
+    listed = localstack.client.list_objects_v2(Bucket=localstack.bucket, Prefix=prefix)["Contents"]
+    assert sorted(o["Key"] for o in listed) == sorted(prefix + n for n in names)
+    for name in names:
+        assert localstack.download_to_tmp(prefix + name, tmp_dir=tmp_path).read_bytes() == name.encode("utf-8")
+    assert localstack.delete_prefix(prefix) == 4
+    assert "Contents" not in localstack.client.list_objects_v2(Bucket=localstack.bucket, Prefix=prefix)
+    assert localstack.delete_prefix(prefix) == 0                      # idempotent: a retry deletes nothing
+
+
+def test_delete_prefix_error_mapping(tmp_path: Path) -> None:
+    """delete_prefix maps S3 errors like the other operations (throttling → Transient, 403 → config error)."""
+    for code, status, expected in [("SlowDown", 503, Transient), ("AccessDenied", 403, S3ConfigError)]:
+        store, stub = stubbed()
+        stub.add_client_error("list_objects_v2", service_error_code=code, http_status_code=status)
+        with stub, pytest.raises(expected):
+            store.delete_prefix("ClinSync/staging/x/")

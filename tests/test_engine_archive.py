@@ -102,6 +102,40 @@ def test_ratio_at_the_limit_is_accepted(tmp_path: Path) -> None:
         inspect(path, replace(POC_LIMITS, max_compression_ratio=ratio - 0.01))
 
 
+# --- R6.10: name length, in UTF-8 bytes (rev 1.3) ---
+
+def test_long_non_ascii_name_passes_a_character_count_but_fails_the_byte_limit(tmp_path: Path) -> None:
+    """120 'Ü' = 120 characters but 240 bytes (+5 for '.docx' = 245): fine. 130 'Ü' = 265 bytes: rejected."""
+    ok_name, long_name = "Ü" * 120 + ".docx", "Ü" * 130 + ".docx"
+    assert len(long_name) == 135 < 255 < len(long_name.encode("utf-8")) == 265
+    assert len(inspect(write_zip(tmp_path / "ok.zip", [(ok_name, b"x")]))) == 1
+    with pytest.raises(Rejected, match="longer than 255 bytes"):
+        inspect(write_zip(tmp_path / "long.zip", [(long_name, b"x")]))
+
+
+def test_ascii_name_limit_is_exactly_255_bytes(tmp_path: Path) -> None:
+    """A 255-byte ASCII name passes; 256 bytes is rejected."""
+    assert len(inspect(write_zip(tmp_path / "a.zip", [("a" * 250 + ".docx", b"x")]))) == 1
+    with pytest.raises(Rejected, match="longer than 255 bytes"):
+        inspect(write_zip(tmp_path / "b.zip", [("a" * 251 + ".docx", b"x")]))
+
+
+def test_long_folder_path_is_rejected_at_the_column_length(tmp_path: Path) -> None:
+    """A short file name under a path over 1024 characters is rejected (source_entry_name is VARCHAR(1024))."""
+    deep = "/".join(["folder"] * 150) + "/a.docx"
+    assert len(deep) > 1024
+    with pytest.raises(Rejected, match="path longer than 1024 characters"):
+        inspect(write_zip(tmp_path / "deep.zip", [(deep, b"x")]))
+
+
+def test_worst_case_staging_key_fits_s3(tmp_path: Path) -> None:
+    """The longest allowed name (255 bytes, 4-byte characters) still yields a staging key under 1024 bytes."""
+    name = "😀" * 62 + ".docx"                                  # 248 + 5 = 253 bytes
+    prefix = f"ClinSync/staging/{'0' * 36}/{'0' * 36}/{'0' * 36}/9999_"
+    assert len((prefix + name).encode("utf-8")) < 1024
+    assert len(inspect(write_zip(tmp_path / "emoji.zip", [(name, b"x")]))) == 1
+
+
 # --- assert_safe_path ---
 
 @pytest.mark.parametrize("name", [

@@ -243,7 +243,7 @@ Every request carries `X-Internal-Key`. Every write after claim carries `X-Claim
 | `POST /internal/files/{id}/heartbeat` | — | 204 · 409 |
 | `PATCH /internal/files/{id}/progress` | `{entries_total?, entries_done?, detected_type?}` | 204 · 409 |
 | `PUT /internal/files/{id}/candidates` | `Candidate` | 200 · 409 — **upsert** on `uq_entry` |
-| `POST /internal/files/{id}/finish` | `{status, status_message?}` | 204 · 409 — rejecting an archive also rejects its `processed` candidates (§8.5a) |
+| `POST /internal/files/{id}/finish` | `{status, status_message?}` | 204 · 409 · 400 — rejecting an archive also rejects its `processed` candidates (§8.5a). For `processed` / `partial` the candidates decide (rev 1.3): `processed` → `partial` if any is rejected; an archive needs exactly `entries_total` candidates, else 400 |
 | `POST /internal/files/{id}/release` | `{reason}` | 204 · 409 — back to `uploaded` before a retry; **sets `uploaded_at = now()`** so the reconcile sweeper does not pre-empt the backoff |
 | `POST /internal/sweeps/stale` | — | `{reset, errored, enqueue_failed}` |
 | `POST /internal/sweeps/reconcile` | — | `{requeued, errored, enqueue_failed}` |
@@ -497,6 +497,12 @@ def process_archive(api, claim, path: Path, beat, limits: Limits) -> FinalStatus
     return FinalStatus("partial" if rejected_any else "processed")   # R7.6
 ```
 
+**Rev 1.3 notes on this loop.**
+- **Partial is decided by the API, not by `rejected_any`.** After a resume, entries rejected in an earlier run are skipped, so the worker's `rejected_any` misses them and it would send `processed`. `finish` counts the candidate rows instead: `processed` becomes `partial` if any is rejected (never the reverse), and an archive must have exactly `entries_total` candidates or the finish is refused with 400. The worker keeps sending `partial` when it knows.
+- **Per-entry temp files are removed on every path** — success, entry rejection, a failed upload or upsert — in a `finally` around each extracted entry, not only after a successful upload.
+- **An entry with no extension** is rejected with "Files without an extension are not supported". An extension longer than the 10-character `file_ext` column is stored truncated on its rejected candidate.
+- **Name limits** (R6.10) are checked by `inspect_archive`: file name ≤ 255 UTF-8 bytes, full path ≤ 1024 characters.
+
 **The staging key is deterministic.** `staging_key` is `ClinSync/staging/{org}/{batch}/{file_id}/{index:04d}_{name}`, where `index` is the entry's position **among file entries** — directories are excluded by `inspect_archive`, so this is not the raw central-directory position. `staging_prefix(claim)` is the same path up to `{file_id}/`. A replayed entry writes the same key, so a crash between `s3.upload` and `upsert_candidate` leaves no orphan and no duplicate. A random key per attempt would leak an object every time an entry is replayed.
 
 **The crash windows**, entry by entry:
@@ -585,6 +591,7 @@ def inspect_archive(zf: zipfile.ZipFile, limits: Limits) -> list[zipfile.ZipInfo
         assert_safe_path(e.filename)                                                          # R6.5
         if e.flag_bits & 0x1:
             raise Rejected(f"'{e.filename}' is encrypted")                                    # R6.6
+        # rev 1.3 — R6.9 duplicate names; R6.10 name ≤ 255 UTF-8 bytes, path ≤ 1024 characters
     return entries
 
 def assert_safe_path(name: str) -> None:

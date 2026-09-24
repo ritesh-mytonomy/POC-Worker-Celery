@@ -104,19 +104,35 @@ def truncate_message(message: str | None) -> str | None:
 
 
 def finish(session: Session, file_id: uuid.UUID, token: uuid.UUID, status: str,
-           status_message: str | None = None) -> None:
-    """Set a terminal status and message and clear the claim token (R10.3)."""
+           status_message: str | None = None) -> str:
+    """Set a terminal status and message, clear the claim token (R10.3); return the status actually stored.
+
+    For `processed` / `partial` the candidate rows decide (rev 1.3): `processed` becomes `partial` if any candidate
+    is rejected (never the reverse), and an archive must have exactly `entries_total` candidates, or InvalidInput.
+    """
     if status not in TERMINAL_STATUSES:
         raise InvalidInput(f"finish() needs a terminal status, got {status!r}")
-    _fenced_update(
+    row = _fenced_update(
         session, file_id, token,
         "status = :status, status_message = :status_message, claim_token = NULL, updated_at = now()",
         {"status": status, "status_message": truncate_message(status_message)},
-        returning="file_id, is_archive",
+        returning="file_id, is_archive, entries_total",
     )
-    # Task 9.3 (design.md §8.5a): rejecting an archive also rejects its `processed` candidates.
-    # That statement goes here — after the fenced UPDATE has locked the row, before the commit.
+    # The fenced UPDATE holds the row lock: nothing below can race a takeover. Task 9.3 (design.md §8.5a) adds the
+    # rejection of `processed` candidates for status `rejected` here too.
+    if status in ("processed", "partial"):
+        counts = session.execute(text("""
+            SELECT count(*) AS total, count(*) FILTER (WHERE status = 'rejected') AS rejected
+            FROM staged_document WHERE source_file_id = :id"""), {"id": file_id}).one()
+        if row["is_archive"] and counts.total != row["entries_total"]:
+            session.rollback()
+            raise InvalidInput(f"archive has {counts.total} candidates but entries_total is "
+                               f"{row['entries_total']}; every entry needs a candidate before finish")
+        if status == "processed" and counts.rejected:                 # R7.6 — decided from the candidate rows
+            session.execute(text("UPDATE upload_file SET status = 'partial' WHERE file_id = :id"), {"id": file_id})
+            status = "partial"
     session.commit()
+    return status
 
 
 def release(session: Session, file_id: uuid.UUID, token: uuid.UUID, reason: str) -> None:
