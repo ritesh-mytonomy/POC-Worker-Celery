@@ -107,7 +107,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** tests show each write succeeds with the current token and raises with an old token after a stale takeover.
   - _Requirements: R4.4, R10.3_
 
-- [ ] **3.4 Candidate upsert**
+- [x] **3.4 Candidate upsert**
   - `repositories/candidates.py::upsert(...)` — check parent token in the same transaction, then `INSERT … ON CONFLICT ON CONSTRAINT uq_entry DO UPDATE`.
   - **Done when:** tests show: inserting the same `(source_file_id, source_entry_name)` twice yields **one** row with the second call's values; the same for `source_entry_name = NULL`.
   - _Requirements: R8.3_

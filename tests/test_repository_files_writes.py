@@ -10,10 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.errors import ClaimSuperseded
 from app.repositories.files import claim, finish, heartbeat, progress, release
-from tests.db_helpers import backdate_timestamps, changed, full_row, make_file, set_heartbeat_age
+from tests.db_helpers import MAX_ATTEMPTS, STALE, backdate_timestamps, changed, claimed, full_row, set_heartbeat_age
 
-MAX_ATTEMPTS = 3
-STALE = 30
 Write = Callable[[Session, uuid.UUID, uuid.UUID], None]
 
 # One call of each write with valid arguments.
@@ -23,14 +21,6 @@ WRITES: dict[str, Write] = {
     "finish": lambda s, f, t: finish(s, f, t, "processed"),
     "release": lambda s, f, t: release(s, f, t, reason="test"),
 }
-
-
-def claimed(session: Session) -> tuple[uuid.UUID, uuid.UUID]:
-    """Create and claim a file; return (file_id, claim_token)."""
-    file_id = make_file(session)
-    result = claim(session, file_id, max_attempts=MAX_ATTEMPTS, stale_after_seconds=STALE)
-    assert result is not None
-    return file_id, result.claim_token
 
 
 def assert_superseded_and_unchanged(session: Session, write: Write, file_id: uuid.UUID, token: uuid.UUID) -> None:

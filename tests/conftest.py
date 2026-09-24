@@ -7,10 +7,12 @@ import uuid
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import Connection, text
+from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import NullPool
 
+from app.config import get_settings
 from app.db import get_engine
 
 
@@ -76,3 +78,11 @@ def committed_file() -> Iterator[uuid.UUID]:
     finally:
         with engine.begin() as conn:     # ON DELETE CASCADE removes the file and any candidates
             conn.execute(text("DELETE FROM upload_batch WHERE batch_id = :b"), {"b": batch_id})
+
+
+@pytest.fixture
+def race_engine() -> Iterator[Engine]:
+    """Engine without pooling, so every Session opens its own physical connection."""
+    engine = create_engine(get_settings().DATABASE_URL, poolclass=NullPool)
+    yield engine
+    engine.dispose()

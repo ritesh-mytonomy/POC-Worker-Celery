@@ -1,16 +1,14 @@
 """Tests for repositories.files.claim (design.md §6.2; R3.2, R3.3, R3.5)."""
 import threading
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 
 import pytest
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import NullPool
 
-from app.config import get_settings
 from app.repositories.files import FileClaim, claim
 from tests.db_helpers import db_row, make_file, set_heartbeat_age
 
@@ -78,24 +76,19 @@ def test_stale_takeover_at_max_attempts_returns_none(db_session: Session) -> Non
 
 # --- concurrency: committed rows, one connection per thread ---
 
-@pytest.fixture
-def race_engine() -> Iterator[Engine]:
-    """Engine without pooling, so every Session opens its own physical connection."""
-    engine = create_engine(get_settings().DATABASE_URL, poolclass=NullPool)
-    yield engine
-    engine.dispose()
-
-
 def race(engine: Engine, claim_fn: ClaimFn, file_id: uuid.UUID, n: int = 10) -> tuple[list[FileClaim | None], set[int]]:
     """Release n threads at once, each claiming file_id on its own connection; return results and backend pids."""
     start = threading.Barrier(n)
 
     def one() -> tuple[FileClaim | None, int]:
-        with Session(engine) as session:
+        # One connection held for the thread's life, so the recorded pid is the one that runs the claim.
+        with engine.connect() as conn, Session(bind=conn) as session:
             pid = session.execute(text("SELECT pg_backend_pid()")).scalar_one()
             session.commit()             # end that transaction: claim must start a fresh one
             start.wait(timeout=10)
-            return claim_fn(session, file_id, max_attempts=MAX_ATTEMPTS, stale_after_seconds=STALE), pid
+            result = claim_fn(session, file_id, max_attempts=MAX_ATTEMPTS, stale_after_seconds=STALE)
+            assert session.execute(text("SELECT pg_backend_pid()")).scalar_one() == pid
+            return result, pid
 
     with ThreadPoolExecutor(max_workers=n) as pool:
         outcomes = list(pool.map(lambda _: one(), range(n)))

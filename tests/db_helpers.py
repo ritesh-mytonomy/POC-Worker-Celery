@@ -6,6 +6,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models import UploadBatch, UploadFile
+from app.repositories.files import claim
+
+MAX_ATTEMPTS = 3
+STALE = 30                               # the POC value
 
 
 def make_file(session: Session, status: str = "uploaded", attempt_count: int = 0) -> uuid.UUID:
@@ -20,6 +24,14 @@ def make_file(session: Session, status: str = "uploaded", attempt_count: int = 0
     session.add(upload)
     session.commit()
     return upload.file_id
+
+
+def claimed(session: Session) -> tuple[uuid.UUID, uuid.UUID]:
+    """Create and claim a file; return (file_id, claim_token)."""
+    file_id = make_file(session)
+    result = claim(session, file_id, max_attempts=MAX_ATTEMPTS, stale_after_seconds=STALE)
+    assert result is not None
+    return file_id, result.claim_token
 
 
 def set_heartbeat_age(session: Session, file_id: uuid.UUID, age_seconds: int) -> None:
