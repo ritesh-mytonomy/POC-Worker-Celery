@@ -247,7 +247,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** an archive whose third entry fails the **outer** CRC ends `rejected`, candidates 1–2 rejected with `Archive rejected: …`, and no objects under its staging prefix · an archive containing one **inner** `.docx` that is a zip bomb ends `partial`, with that entry rejected as `unsafe` and every other entry `processed`.
   - _Requirements: R6.8_
 
-- [ ] **9.4 Superseded stop**
+- [x] **9.4 Superseded stop**
   - Heartbeat sets `superseded` on 409; loop calls `beat.raise_if_superseded()` before each entry.
   - **Done when:** a unit test flips the flag mid-loop and asserts no further upserts.
   - _Requirements: R4.4_

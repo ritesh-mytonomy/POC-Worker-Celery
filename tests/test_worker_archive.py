@@ -323,3 +323,88 @@ def test_entry_delay_sleeps_after_each_entry(ingest: Any, docs: dict[str, bytes]
     path = write_zip(tmp_path / "three.zip", [(f"d{i}.docx", docs["docx"]) for i in range(3)])
     ingest.process_archive(StatefulApi(), claim(), path, Beat(), POC_LIMITS, MemoryStore())
     assert sleeps == [1.5, 1.5, 1.5]
+
+
+# --- task 9.4: superseded stop ---
+
+class SupersededAfter(Beat):
+    """A heartbeat that reports ownership lost from its Nth check onwards (a 409 arrived mid-loop)."""
+
+    def __init__(self, checks_ok: int, error: BaseException | None = None) -> None:
+        """Checks 1..checks_ok pass; later checks raise `error` (default ClaimSuperseded)."""
+        super().__init__()
+        self.checks_ok, self.error = checks_ok, error
+
+    def raise_if_superseded(self) -> None:
+        """Pass for the first checks, then raise."""
+        super().raise_if_superseded()
+        if self.checks > self.checks_ok:
+            from app.errors import ClaimSuperseded
+            raise self.error or ClaimSuperseded(FILE)
+
+
+def test_superseded_mid_loop_stops_before_the_next_entry(ingest: Any, docs: dict[str, bytes], tmp_path: Path) -> None:
+    """Flag flips after entry 1: no upsert, upload or progress for entries 2+, and the staging prefix is NOT deleted
+    (the new owner's objects live there)."""
+    from app.errors import ClaimSuperseded
+    path, _ = mixed(docs, tmp_path)
+    api, store = StatefulApi(), MemoryStore()
+    with pytest.raises(ClaimSuperseded):
+        ingest.process_archive(api, claim(), path, SupersededAfter(checks_ok=2), POC_LIMITS, store)
+    assert api.upserts == [0, 1]
+    assert api.entries_done == 2 and set(store.objects) == {f"{PREFIX}0000_a.docx"}
+    assert store.deleted_prefixes == []
+
+
+def test_non_retryable_heartbeat_error_also_stops_the_loop(ingest: Any, docs: dict[str, bytes], tmp_path: Path) -> None:
+    """A 401 seen by the heartbeat (rev 1.3) is re-raised at the next check; the loop stops the same way."""
+    from workers.internal_client import InternalAuthError
+    path, _ = mixed(docs, tmp_path)
+    api, store = StatefulApi(), MemoryStore()
+    with pytest.raises(InternalAuthError):
+        ingest.process_archive(api, claim(), path,
+                               SupersededAfter(checks_ok=1, error=InternalAuthError(401, "invalid_internal_key", "x")),
+                               POC_LIMITS, store)
+    assert api.upserts == [0] and store.deleted_prefixes == []
+
+
+def test_real_heartbeat_409_stops_process_upload_without_finishing(ingest: Any, fixtures_dir: Path, tmp_path: Path,
+                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    """End to end in the task: the real Heartbeat gets 409, the loop stops, nothing is finished or deleted."""
+    import time as real_time
+    from app.errors import ClaimSuperseded
+
+    class Bound(StatefulApi):
+        """Bound client whose heartbeat is refused, and whose upserts are slow enough for a beat to land."""
+
+        def heartbeat(self) -> None:
+            raise ClaimSuperseded(FILE)
+
+        def upsert_candidate(self, **kw: Any) -> uuid.UUID:
+            real_time.sleep(0.05)
+            return super().upsert_candidate(**kw)
+
+        def finish(self, final: FinalStatus) -> str:                      # must never be reached
+            raise AssertionError("finish after losing ownership")
+
+    bound = Bound()
+
+    class Internal:
+        def claim(self, file_id: str) -> FileClaim:
+            return claim(name="big30.zip")
+
+        def with_token(self, file_id: str, token: uuid.UUID) -> Bound:
+            return bound
+
+    class Store(MemoryStore):
+        def download_to_tmp(self, key: str, tmp_dir: Path | None = None) -> Path:
+            return Path(__import__("shutil").copy(fixtures_dir / "big30.zip", tmp_path / "dl.zip"))
+
+        def delete_quietly(self, key: str) -> None:
+            raise AssertionError("incoming deleted after losing ownership")
+
+    monkeypatch.setattr(ingest.settings, "HEARTBEAT_SECONDS", 0.02)
+    monkeypatch.setattr(ingest, "internal", lambda: Internal())
+    monkeypatch.setattr(ingest, "s3", lambda: Store())
+    ingest.process_upload.apply(kwargs={"file_id": str(FILE), "organization_id": str(ORG)}).get()
+    assert 0 < len(bound.upserts) < 30, "stopped part-way, before the next entry"
