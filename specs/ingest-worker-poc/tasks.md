@@ -128,7 +128,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** a route test without the header returns 401.
   - _Requirements: R4.3_
 
-- [ ] **4.2 Internal routes**
+- [x] **4.2 Internal routes**
   - All eight `/internal/*` routes in `design.md` §6.2. Map `ClaimSuperseded` → 409 `claim_superseded`; claim `None` → 409 `not_claimable`.
   - **Done when:** `tests/test_routes_internal_fencing.py` covers 200/204 with the right token and 409 with a wrong one, for every write route.
   - _Requirements: R3.1, R4.2, R4.4_

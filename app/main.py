@@ -1,4 +1,4 @@
-"""FastAPI entry point — minimal stub for Checkpoint A; replaced by tasks 2.x."""
+"""FastAPI entry point: routers, error envelope, startup validation."""
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -6,6 +6,8 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.logging import configure_logging, get_logger
+from app.routes import internal
+from app.routes.errors import install_error_handlers
 
 configure_logging()
 log = get_logger(__name__)
@@ -24,6 +26,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="ClinSync Ingest POC", lifespan=lifespan)
+install_error_handlers(app)
+app.include_router(internal.router)
 
 
 @app.get("/health")

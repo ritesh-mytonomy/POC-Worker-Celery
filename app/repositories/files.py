@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.errors import ClaimSuperseded
+from app.errors import ClaimSuperseded, InvalidInput
 from app.logging import get_logger
 
 log = get_logger(__name__)
@@ -89,7 +89,7 @@ def progress(session: Session, file_id: uuid.UUID, token: uuid.UUID, *, entries_
     values = {"entries_total": entries_total, "entries_done": entries_done, "detected_type": detected_type}
     passed = {name: values[name] for name in _PROGRESS_FIELDS if values[name] is not None}
     if not passed:
-        raise ValueError("progress() needs at least one of entries_total, entries_done, detected_type")
+        raise InvalidInput("progress() needs at least one of entries_total, entries_done, detected_type")
     assignments = "".join(f"{name} = :{name}, " for name in passed)   # names from the fixed allow-list
     _fenced_update(session, file_id, token, f"{assignments}heartbeat_at = now(), updated_at = now()", passed)
     session.commit()
@@ -106,7 +106,7 @@ def finish(session: Session, file_id: uuid.UUID, token: uuid.UUID, status: str,
            status_message: str | None = None) -> None:
     """Set a terminal status and message and clear the claim token (R10.3)."""
     if status not in TERMINAL_STATUSES:
-        raise ValueError(f"finish() needs a terminal status, got {status!r}")
+        raise InvalidInput(f"finish() needs a terminal status, got {status!r}")
     _fenced_update(
         session, file_id, token,
         "status = :status, status_message = :status_message, claim_token = NULL, updated_at = now()",

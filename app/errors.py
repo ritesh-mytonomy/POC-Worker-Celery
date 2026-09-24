@@ -10,5 +10,9 @@ class ClaimSuperseded(Exception):
         self.file_id = file_id
 
 
+class InvalidInput(ValueError):
+    """A request the schema would accept but that makes no sense; the caller's mistake, never retried (400)."""
+
+
 class CandidateIdentityMismatch(ValueError):
     """A replayed candidate's entry_index, file_name or file_ext differs from the stored row."""

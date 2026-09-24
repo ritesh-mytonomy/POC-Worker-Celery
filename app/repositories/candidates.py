@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.errors import CandidateIdentityMismatch, ClaimSuperseded
+from app.errors import CandidateIdentityMismatch, ClaimSuperseded, InvalidInput
 from app.repositories.files import truncate_message
 
 CANDIDATE_STATUSES = frozenset({"processed", "rejected"})
@@ -36,15 +36,15 @@ RETURNING staged_id, entry_index, file_name, file_ext
 
 def _validate(status: str, s3_key: str | None, reject_reason: str | None,
               source_entry_name: str | None, entry_index: int | None) -> None:
-    """Raise ValueError for a candidate the schema would accept but that makes no sense."""
+    """Raise InvalidInput for a candidate the schema would accept but that makes no sense."""
     if status not in CANDIDATE_STATUSES:
-        raise ValueError(f"candidate status must be processed or rejected, got {status!r}")
+        raise InvalidInput(f"candidate status must be processed or rejected, got {status!r}")
     if status == "processed" and (not s3_key or reject_reason):
-        raise ValueError("a processed candidate needs an s3_key and no reject_reason")
+        raise InvalidInput("a processed candidate needs an s3_key and no reject_reason")
     if status == "rejected" and (s3_key or not reject_reason):
-        raise ValueError("a rejected candidate needs a reject_reason and no s3_key")
+        raise InvalidInput("a rejected candidate needs a reject_reason and no s3_key")
     if (source_entry_name is None) != (entry_index is None):
-        raise ValueError("source_entry_name and entry_index must both be set (archive entry) or both be None")
+        raise InvalidInput("source_entry_name and entry_index must both be set (archive entry) or both be None")
 
 
 def upsert(session: Session, file_id: uuid.UUID, token: uuid.UUID, *, source_entry_name: str | None,
