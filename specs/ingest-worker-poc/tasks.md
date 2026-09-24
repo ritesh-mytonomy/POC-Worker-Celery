@@ -156,7 +156,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 5 · Engine  ·  ~4 h  ·  *parallel from Phase 0*
 
-- [ ] **5.1 Fixtures**
+- [x] **5.1 Fixtures**
   - `fixtures/make_fixtures.py` builds every fixture in `design.md` §10.1 into `fixtures/out/`.
   - `encrypted.zip`: write normally, then set `flag_bits |= 0x1` on the `ZipInfo` in both local header and central directory.
   - `lying.zip`: write one entry, then patch its declared uncompressed size in the central directory to a smaller value.

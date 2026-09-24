@@ -3,9 +3,11 @@
 Database tests skip when PostgreSQL is unreachable, unless REQUIRE_DB=1, in which case they fail.
 """
 import os
+import sys
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 from sqlalchemy import Connection, Engine, create_engine, text
@@ -102,3 +104,14 @@ def race_engine() -> Iterator[Engine]:
     engine = create_engine(get_settings().DATABASE_URL, poolclass=NullPool)
     yield engine
     engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def fixtures_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Every design.md §10.1 fixture, built once per test session into a temporary directory."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
+    import make_fixtures
+
+    out = tmp_path_factory.mktemp("fixtures")
+    make_fixtures.build(out)
+    return out
