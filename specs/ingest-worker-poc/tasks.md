@@ -219,7 +219,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 8 · Single document  ·  ~2 h
 
-- [ ] **8.1 S3 helper**
+- [x] **8.1 S3 helper**
   - `download_to_tmp` (streamed), `copy` (server-side), `upload`, `delete_quietly` — boto3 with `endpoint_url=AWS_ENDPOINT_URL` when set.
   - **Done when:** a smoke test round-trips a file through LocalStack.
   - _Requirements: R1.4_

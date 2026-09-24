@@ -6,6 +6,11 @@ x-app: &app
   env_file:
     - path: .env
       required: false
+  environment:
+    # LocalStack accepts any credentials; these dummies let boto3 sign requests. Production uses an IAM role.
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
+    AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
 
 x-worker: &worker
   <<: *app
