@@ -324,7 +324,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 - [x] **14.2 Demo runbook — S5 and S5b**
   - A five-minute script for showing the resume live: which terminal shows what, the exact kill command, what to point at in the logs, and the final assertion.
 
-- [ ] **14.3 Findings note**
+- [x] **14.3 Findings note**
   - One page back to Tasneem: what the POC proved, the POC timings versus the production values in `design.md` §9, and answers to open questions A1 and A2 in `requirements.md` §4.
 
 ---
