@@ -6,11 +6,11 @@ import zipfile
 from pathlib import Path
 
 EXPECTED = ["valid.docx", "renamed_exe.docx", "renamed_zip.docx", "mixed.zip", "big30.zip", "bomb.zip",
-            "slip.zip", "encrypted.zip", "lying.zip", "dupnames.zip", "lying3.zip", "inner_bomb.zip"]
+            "slip.zip", "encrypted.zip", "lying.zip", "dupnames.zip", "lying3.zip", "inner_bomb.zip", "big100.zip"]
 
 
 def test_builds_every_fixture(fixtures_dir: Path) -> None:
-    """All twelve files exist (§10.1 rev 1.3: dupnames.zip, lying3.zip, inner_bomb.zip added)."""
+    """All thirteen files exist (§10.1 rev 1.3: dupnames.zip, lying3.zip, inner_bomb.zip, big100.zip added)."""
     assert sorted(p.name for p in fixtures_dir.iterdir()) == sorted(EXPECTED)
 
 
@@ -49,6 +49,9 @@ def test_fixture_properties(fixtures_dir: Path) -> None:
         infos = zf.infolist()
         assert [i.filename for i in infos] == ["d0.docx", "d1.docx", "d2.docx"]
         assert zf.read("d0.docx") and zf.read("d1.docx")                               # the first two are honest
+    with zipfile.ZipFile(f / "big100.zip") as zf:
+        infos = zf.infolist()
+        assert len(infos) == 100 and all(40 * 1024 <= i.file_size <= 64 * 1024 for i in infos)   # ~50 KB each
     with zipfile.ZipFile(f / "inner_bomb.zip") as zf:
         assert zf.namelist() == ["a.docx", "bomb.docx", "c.docx"]
         assert zf.getinfo("bomb.docx").compress_type == zipfile.ZIP_STORED

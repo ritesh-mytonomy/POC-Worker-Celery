@@ -153,6 +153,31 @@ def inner_bomb_zip() -> bytes:
     return buf.getvalue()
 
 
+def docx_of_size(target: int, seed: int) -> bytes:
+    """A valid .docx of roughly `target` bytes: random words don't compress, so they set the size."""
+    rng = random.Random(seed)
+    words = ["".join(rng.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(rng.randint(3, 10)))
+             for _ in range(2000)]
+    document = Document()
+    size, paragraphs = 0, 0
+    while size < target:
+        document.add_paragraph(" ".join(rng.choice(words) for _ in range(400)))
+        paragraphs += 1
+        if paragraphs % 5 == 0:
+            buf = io.BytesIO()
+            document.save(buf)
+            size = len(buf.getvalue())
+    buf = io.BytesIO()
+    document.save(buf)
+    return buf.getvalue()
+
+
+def big100_zip() -> bytes:
+    """big100.zip — 100 valid .docx of ~50 KB each (NFR-3)."""
+    doc = docx_of_size(50 * 1024, seed=3)
+    return _zip([(f"doc{i:03d}.docx", doc) for i in range(1, 101)])
+
+
 FIXTURES: dict[str, Callable[[], bytes]] = {
     "valid.docx": valid_docx,
     "renamed_exe.docx": renamed_exe_docx,
@@ -166,6 +191,7 @@ FIXTURES: dict[str, Callable[[], bytes]] = {
     "dupnames.zip": dupnames_zip,
     "lying3.zip": lying3_zip,
     "inner_bomb.zip": inner_bomb_zip,
+    "big100.zip": big100_zip,
 }
 
 

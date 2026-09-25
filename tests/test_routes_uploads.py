@@ -157,6 +157,13 @@ def test_publish_works_again_after_a_failed_publish(monkeypatch: pytest.MonkeyPa
     """Regression (4.4 live check): after one failed publish the next real publish succeeds, not 'closed pool'."""
     import redis
 
+    import os
+    try:
+        redis.Redis.from_url(get_settings().REDIS_URL, socket_connect_timeout=1).ping()
+    except redis.exceptions.ConnectionError as exc:
+        if os.environ.get("REQUIRE_DB") == "1":
+            pytest.fail(f"Redis not reachable: {exc!r} (REQUIRE_DB=1)")
+        pytest.skip(f"Redis not reachable: {exc!r}")
     tasks_client.reset_producer()
     producer = tasks_client.get_producer()
     real_send, failed_once = producer.send_task, []

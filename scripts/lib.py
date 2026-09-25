@@ -1,4 +1,8 @@
-"""Scenario helpers (design.md §10): drive the running stack from the host. Standard library + docker compose only."""
+"""Scenario helpers (design.md §10): drive the running stack from the host. Standard library + docker compose only.
+
+Clocks: every timeout, deadline and reported duration uses time.monotonic(), so a clock jump (a suspended laptop)
+cannot cause a false timeout. Wall-clock time.time() is used only to compare with containers' log timestamps.
+"""
 import json
 import os
 import subprocess
@@ -241,8 +245,27 @@ def assert_no_undeliverable(scenario: Scenario) -> None:
     scenario.check("LLEN ae.undeliver", redis_llen("ae.undeliver"), 0)
 
 
-def cleanup(scenario: Scenario, batch_id: str, keys: list[str]) -> None:
-    """Remove the scenario's batch (cascades to files and candidates), its incoming keys and staged objects."""
+def psql(sql: str) -> str:
+    """Run one SQL statement in the compose Postgres; return tab-separated rows."""
+    user, db = os.environ.get("POSTGRES_USER", "clinsync"), os.environ.get("POSTGRES_DB", "clinsync")
+    return compose("exec", "-T", "postgres", "psql", "-U", user, "-d", db, "-tA", "-c", sql).strip()
+
+
+def assert_batch_invariants(scenario: Scenario, batch_id: str, check_terminal: bool = True) -> None:
+    """NFR-5: no duplicate candidates; NFR-6: no file left non-terminal (task 13.2). Checked from Postgres."""
+    b = uuid.UUID(batch_id)
+    duplicates = psql(f"SELECT count(*) FROM (SELECT 1 FROM staged_document WHERE batch_id = '{b}' "
+                      f"GROUP BY source_file_id, source_entry_name HAVING count(*) > 1) d")
+    scenario.check("NFR-5 duplicate candidates", int(duplicates or 0), 0)
+    if check_terminal:
+        open_files = psql(f"SELECT count(*) FROM upload_file WHERE batch_id = '{b}' "
+                          f"AND status NOT IN ('processed', 'partial', 'rejected', 'error')")
+        scenario.check("NFR-6 non-terminal files", int(open_files or 0), 0)
+
+
+def cleanup(scenario: Scenario, batch_id: str, keys: list[str], check_terminal: bool = True) -> None:
+    """Assert NFR-5/NFR-6, then remove the batch (cascades to files and candidates), incoming keys, staged objects."""
+    assert_batch_invariants(scenario, batch_id, check_terminal)
     if scenario.keep:
         print(f"  kept: batch {batch_id}, keys {keys}")
         return

@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Every scenario from a clean stack (task 13.1): S1–S8, S5b, and the check scripts. Each asserts
-# LLEN ae.undeliver == 0 itself. Prints a pass/fail table; exits non-zero on any failure.
+# Every scenario from a clean stack (task 13.1): S1–S8, S5b, the check scripts and the NFR timings (13.2).
+# Each asserts LLEN ae.undeliver == 0 itself, and NFR-5/NFR-6 on its batch before cleanup. Prints a pass/fail table; exits non-zero on any failure.
 # Output of each script: run_logs/<name>.log. S5 runs without --wait-visibility.
 set -uo pipefail
 cd "$(dirname "$0")/.."
+
+# Block system sleep for the whole run: a suspended laptop stalls every scenario for hours.
+if [ -z "${RUN_ALL_INHIBITED:-}" ]; then
+  export RUN_ALL_INHIBITED=1
+  exec systemd-inhibit --what=sleep --who="clinsync run_all" --why="scenario suite running" --mode=block "$0" "$@" \
+    || { echo "systemd-inhibit failed: disable automatic suspend, then run again with RUN_ALL_INHIBITED=1"; exit 3; }
+fi
 LOGS=run_logs
 mkdir -p "$LOGS"
+mono() { python3 -c 'import time; print(int(time.monotonic()))'; }   # durations immune to clock jumps
 
 echo "== clean stack: docker compose down -v && up -d --build --wait"
 docker compose down -v >/dev/null 2>&1
@@ -29,6 +37,7 @@ RUNS=(
   "check_confirm_redis_down|./scripts/check_confirm_redis_down.sh"
   "check_archive_rejection|python3 scripts/check_archive_rejection.py"
   "check_retry|python3 scripts/check_retry.py"
+  "check_nfr|python3 scripts/check_nfr.py"
 )
 
 declare -a RESULTS
@@ -36,9 +45,9 @@ failed=0
 for run in "${RUNS[@]}"; do
   name=${run%%|*}; cmd=${run#*|}
   printf "== %-26s " "$name"
-  start=$(date +%s)
+  start=$(mono)
   if $cmd >"$LOGS/$name.log" 2>&1; then verdict=PASS; else verdict=FAIL; failed=$((failed + 1)); fi
-  secs=$(( $(date +%s) - start ))
+  secs=$(( $(mono) - start ))
   echo "$verdict (${secs}s)"
   RESULTS+=("$name|$verdict|$secs")
 done

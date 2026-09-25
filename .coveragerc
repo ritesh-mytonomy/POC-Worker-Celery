@@ -1,0 +1,3 @@
+# Coverage data goes to /tmp: /srv is read-only for the app user in the image.
+[run]
+data_file = /tmp/.coverage

@@ -747,6 +747,7 @@ Each scenario is one script in `scripts/`, runs against a clean `docker compose 
 | `dupnames.zip` | two entries with the same name, `a.docx` (rev 1.3, R6.9) | unit tests |
 | `lying3.zip` | three valid `.docx`, stored; the third's central-directory sizes patched to half (rev 1.3) | task 9.3 |
 | `inner_bomb.zip` | `a.docx`, `bomb.docx` (= `bomb.zip`, stored), `c.docx` (rev 1.3) | task 9.3 |
+| `big100.zip` | 100 valid `.docx` of ~50 KB each (rev 1.3) | NFR-3, task 13.2 |
 
 ### 10.2 Scenarios
 

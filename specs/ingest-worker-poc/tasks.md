@@ -160,7 +160,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - `fixtures/make_fixtures.py` builds every fixture in `design.md` §10.1 into `fixtures/out/`.
   - `encrypted.zip`: write normally, then set `flag_bits |= 0x1` on the `ZipInfo` in both local header and central directory.
   - `lying.zip`: write one entry, then patch its declared uncompressed size in the central directory to a smaller value.
-  - **Done when:** running it produces all twelve files.
+  - **Done when:** running it produces all thirteen files.
 
 - [x] **5.2 `detect_file_type`**
   - Per `design.md` §8.4. Returns a `Detection`; **never raises** for bad content. Takes a `Limits` argument — see `engine/limits.py`.
@@ -308,7 +308,7 @@ Estimates are rough, for one developer familiar with FastAPI.
   - **Done when:** `./scripts/run_all.sh` prints nine passes from a clean machine. Each scenario asserts `LLEN ae.undeliver == 0` itself before exiting.
   - _Requirements: §5 Definition of done_
 
-- [ ] **13.2 Non-functional checks**
+- [x] **13.2 Non-functional checks**
   - Add timing assertions: confirm p95 over 50 calls (NFR-1), confirm-to-claim (NFR-2), 100-entry archive end to end (NFR-3).
   - Assert across all scenarios: zero duplicate candidates (NFR-5), zero non-terminal files after sweeps (NFR-6).
   - Add `--cov=engine --cov=workers --cov-fail-under=80` to `pytest.ini`.
