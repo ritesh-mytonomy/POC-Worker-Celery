@@ -31,12 +31,23 @@ def test_time_limits_and_visibility_timeout_come_from_settings(conf: Any) -> Non
     assert conf.broker_transport_options["visibility_timeout"] > conf.task_time_limit
 
 
+def _fresh(code: str) -> Any:
+    """Run code in a fresh interpreter (no other test can have imported poc/ into it); return its JSON output."""
+    import json
+    import os
+    import subprocess
+    import sys
+    env = {**os.environ, "INTERNAL_API_KEY": os.environ.get("INTERNAL_API_KEY", "test-key")}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, env=env).stdout
+    return json.loads(out.strip().splitlines()[-1])
+
+
 def test_routes_send_each_task_family_to_its_queue(conf: Any) -> None:
-    """Three queues, one per worker pool (R13.1)."""
+    """Ingest and maintenance routes only; the scan route belongs to poc/celery_app.py (rev 1.4)."""
     assert conf.task_default_queue == "clinsync.ingest"
-    assert conf.task_routes == {"workers.ingest.*": {"queue": "clinsync.ingest"},
-                                "workers.scan.*": {"queue": "clinsync.scan"},
-                                "workers.sweepers.*": {"queue": "clinsync.maintenance"}}
+    routes = _fresh("import json, workers.celery_app as w; print(json.dumps(w.app.conf.task_routes))")
+    assert routes == {"workers.ingest.*": {"queue": "clinsync.ingest"},
+                      "workers.sweepers.*": {"queue": "clinsync.maintenance"}}
 
 
 def test_beat_schedule_runs_both_sweeps_every_interval_with_expiry(conf: Any) -> None:
@@ -58,6 +69,9 @@ def test_sweep_tasks_are_registered_and_routed_to_maintenance(conf: Any) -> None
     """
     from workers.celery_app import app
     app.loader.import_default_modules()
+    registered = _fresh("import json, workers.celery_app as w; w.app.loader.import_default_modules(); "
+                        "print(json.dumps(sorted(w.app.tasks)))")
+    assert not [t for t in registered if t.startswith(("poc.", "workers.scan."))], "production app registers no POC task"
     for name in ("workers.sweepers.run_stale_sweep", "workers.sweepers.run_reconcile_sweep"):
         assert name in app.tasks
         assert app.amqp.router.route({}, name)["queue"].name == "clinsync.maintenance"

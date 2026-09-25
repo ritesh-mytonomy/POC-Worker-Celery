@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app import tasks_client
 from app.config import get_settings
 from app.db import get_db_session
-from app.main import app
+from poc.main import app
 
 
 @pytest.fixture

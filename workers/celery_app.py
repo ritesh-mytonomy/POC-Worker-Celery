@@ -1,18 +1,14 @@
 """The workers' Celery app (design.md §7): delivery guarantees, routes, and beat for the sweepers."""
 from typing import Any
 
-import celery.apps.worker
 from celery import Celery, signals
 
 from app.config import get_settings
-from app.constants import QUEUE_INGEST, QUEUE_MAINTENANCE, QUEUE_SCAN, TASK_RECONCILE_SWEEP, TASK_STALE_SWEEP
-from app.logging import configure_logging, get_logger, say_json
+from app.constants import QUEUE_INGEST, QUEUE_MAINTENANCE, TASK_RECONCILE_SWEEP, TASK_STALE_SWEEP
+from app.logging import configure_logging, get_logger
 
 configure_logging()
 log = get_logger(__name__)
-# Celery prints shutdown/restart notices from its signal handlers via safe_say, straight to
-# stdout as plain text; no signal fires first. Replace it so those lines are JSON too (R15.1).
-celery.apps.worker.safe_say = say_json
 
 
 @signals.setup_logging.connect
@@ -32,7 +28,7 @@ def _log_start_instead_of_banner(sender: str, instance: Any, options: dict[str, 
 settings = get_settings()
 
 app = Celery("clinsync", broker=settings.REDIS_URL,
-             include=["workers.ingest", "workers.sweepers", "workers.scan"])   # task modules to register
+             include=["workers.ingest", "workers.sweepers"])   # task modules to register
 
 app.conf.update(
     task_acks_late=True,                 # R9.1 — ack after the body, not on receipt
@@ -46,7 +42,6 @@ app.conf.update(
     task_default_queue=QUEUE_INGEST,
     task_routes={
         "workers.ingest.*":   {"queue": QUEUE_INGEST},
-        "workers.scan.*":     {"queue": QUEUE_SCAN},
         "workers.sweepers.*": {"queue": QUEUE_MAINTENANCE},
     },
     # Each sweep message expires after one interval: if the consumer is stuck (or beat runs separately, as in

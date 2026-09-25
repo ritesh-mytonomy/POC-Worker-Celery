@@ -3,8 +3,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from app.constants import TASK_SCAN_STUB
 from app.logging import get_logger
+from poc.constants import TASK_SCAN_STUB
 from workers.celery_app import app
 
 log = get_logger(__name__)

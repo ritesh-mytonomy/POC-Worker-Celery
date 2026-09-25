@@ -196,8 +196,8 @@ def test_producer_settings_fail_fast() -> None:
 
 
 def test_tasks_client_does_not_import_the_worker_app() -> None:
-    """The API never imports workers.celery_app."""
-    code = "import sys, app.tasks_client, app.main; print('workers.celery_app' in sys.modules)"
+    """The API process (app.main, and the POC wrapper poc.main) never imports workers.celery_app."""
+    code = "import sys, app.tasks_client, app.main, poc.main; print('workers.celery_app' in sys.modules)"
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
     assert out.strip().splitlines()[-1] == "False"
 

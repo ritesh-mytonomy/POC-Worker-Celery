@@ -1,4 +1,4 @@
-"""workers/heartbeat.py (design.md §8.6; R10.1)."""
+"""The Heartbeat thread in workers/ingest.py (design.md §8.6; R10.1)."""
 import threading
 import time
 
@@ -6,7 +6,7 @@ import pytest
 
 from app.errors import ClaimSuperseded
 from engine.errors import Transient
-from workers.heartbeat import Heartbeat
+from workers.ingest import Heartbeat
 from workers.internal_client import InternalAuthError, WorkerContractError
 
 

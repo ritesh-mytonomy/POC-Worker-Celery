@@ -40,12 +40,14 @@ Three rules hold everywhere:
 | `localstack` | `localstack/localstack` | S3 on `:4566`. Bucket created by an init hook |
 | `redis` | `redis:7-alpine --appendonly yes` | Broker. AOF on, matching ElastiCache |
 | `postgres` | `postgres:15-alpine` | State. Schema applied by init script |
-| `api` | `uvicorn app.main:app --host 0.0.0.0 --port 8000` | Public + internal endpoints, enqueues tasks |
+| `api` | `uvicorn poc.main:app --host 0.0.0.0 --port 8000` (rev 1.4: the POC wrapper around `app.main:app`) | Public + internal endpoints, enqueues tasks; `/poc/*` helpers |
 | `worker-ingest` | `celery -A workers.celery_app worker -Q clinsync.ingest -c ${INGEST_CONCURRENCY} -n ingest@%h` | `process_upload` |
-| `worker-scan` | `celery -A workers.celery_app worker -Q clinsync.scan -c 1 -n scan@%h` | Stub scan task — proves isolation |
+| `worker-scan` | `celery -A poc.celery_app worker -Q clinsync.scan -c 1 -n scan@%h` (rev 1.4: the production app plus the stub) | Stub scan task — proves isolation |
 | `worker-maint` | `celery -A workers.celery_app worker -Q clinsync.maintenance -c 1 -B -n maint@%h` | Sweepers, with beat embedded |
 
 `-B` embeds beat in one worker. Acceptable because exactly one `worker-maint` runs. In AWS, beat becomes its own single-instance ECS service.
+
+**POC-only code lives in `poc/` and the dependency points one way** (rev 1.4): `poc/` may import `app/` and `workers/`; nothing in `app/` or `workers/` imports or names `poc/` (tested). `poc.main` and `poc.celery_app` are thin entry points that add the POC routes and the scan stub to the production app objects, so deleting `poc/` and pointing the two commands back at `app.main:app` / `workers.celery_app` leaves production intact.
 
 ---
 
@@ -76,7 +78,6 @@ Mirrors the house layering (LLD §D1) at POC scale. Built at the **root of the w
 │   │   ├── uploads.py             confirm → enqueue
 │   │   └── sweeps.py              stale + reconcile
 │   ├── routes/
-│   │   ├── poc.py                 /poc/seed, /poc/scan-stub
 │   │   ├── uploads.py             confirm, batch status, staged
 │   │   └── internal.py            /internal/*
 │   ├── constants.py               queue and task names, shared with workers/
@@ -89,10 +90,15 @@ Mirrors the house layering (LLD §D1) at POC scale. Built at the **root of the w
 ├── workers/
 │   ├── celery_app.py              config (§7), routes, beat schedule
 │   ├── internal_client.py         typed httpx client for /internal/*, carries claim token
-│   ├── heartbeat.py               background thread
-│   ├── ingest.py                  process_upload
-│   ├── scan.py                    scan_stub
+│   ├── ingest.py                  process_upload, incl. the heartbeat thread (rev 1.4)
 │   └── sweepers.py                run_stale_sweep, run_reconcile_sweep
+├── poc/                           POC-only (rev 1.4); imports app/ and workers/, never imported by them
+│   ├── main.py                    uvicorn entry point: app.main:app + the POC router
+│   ├── routes.py                  /poc/seed, /poc/enqueue, /poc/scan-stub
+│   ├── producer.py                enqueue_scan_stub (uses the production producer; imports app/ only)
+│   ├── constants.py               TASK_SCAN_STUB
+│   ├── celery_app.py              worker-scan entry point: workers.celery_app + the scan route and stub
+│   └── scan_stub.py               scan_stub
 ├── fixtures/
 │   └── make_fixtures.py           generates every test file (§10.1)
 ├── scripts/
@@ -295,6 +301,8 @@ SET status = EXCLUDED.status, s3_key = EXCLUDED.s3_key,
 
 The API does not import `workers.celery_app`. `app/tasks_client.py` builds its own producer-only instance, sharing queue and task names through `app/constants.py`:
 
+(Rev 1.4: `enqueue_scan_stub` and `TASK_SCAN_STUB` moved to `poc/producer.py` / `poc/constants.py`; they use this producer. The `workers.scan.* → clinsync.scan` route moved to `poc/celery_app.py`. The §6.3 task name is unchanged.)
+
 ```python
 # app/tasks_client.py
 producer = Celery("clinsync-api", broker=settings.REDIS_URL)
@@ -336,7 +344,7 @@ Celery's publish defaults retry and can block for seconds when Redis is down, br
 ```python
 # workers/celery_app.py
 app = Celery("clinsync", broker=settings.REDIS_URL,
-             include=["workers.ingest", "workers.sweepers", "workers.scan"])  # rev 1.3 — task modules
+             include=["workers.ingest", "workers.sweepers"])  # rev 1.3/1.4 — task modules; the scan stub is poc/
 
 app.conf.update(
     task_acks_late=True,                 # R9.1 — ack after the body, not on receipt
@@ -350,7 +358,6 @@ app.conf.update(
     task_default_queue="clinsync.ingest",
     task_routes={
         "workers.ingest.*":   {"queue": "clinsync.ingest"},
-        "workers.scan.*":     {"queue": "clinsync.scan"},
         "workers.sweepers.*": {"queue": "clinsync.maintenance"},
     },
     beat_schedule={

@@ -65,7 +65,7 @@ services:
 
   api:
     <<: *app
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "poc.main:app", "--host", "0.0.0.0", "--port", "8000"]   # POC wrapper: app.main:app + /poc/*
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -87,7 +87,7 @@ services:
 
   worker-scan:
     <<: *worker
-    command: celery -A workers.celery_app worker -Q clinsync.scan -c 1 -n scan@%h
+    command: celery -A poc.celery_app worker -Q clinsync.scan -c 1 -n scan@%h   # POC wrapper: + scan stub
 
   worker-maint:
     <<: *worker

@@ -88,9 +88,9 @@ docker run --rm --network none clinsync-ingest-poc:dev pytest tests/test_engine_
 
 | Service | Role |
 |---|---|
-| `api` | FastAPI on `:8000`. The only component that touches PostgreSQL. Public routes (confirm, batch status, staged candidates), the `/internal/*` routes workers call (claim, heartbeat, progress, candidates, finish, release, sweeps — all need `X-Internal-Key`, writes also `X-Claim-Token`), and POC-only `/poc/*` helpers (seed, enqueue, scan-stub). It publishes `process_upload` to Redis on confirm. |
+| `api` | FastAPI on `:8000`. The only component that touches PostgreSQL. Public routes (confirm, batch status, staged candidates), the `/internal/*` routes workers call (claim, heartbeat, progress, candidates, finish, release, sweeps — all need `X-Internal-Key`, writes also `X-Claim-Token`), and POC-only `/poc/*` helpers (seed, enqueue, scan-stub), mounted by the POC entry point `poc.main:app`, which wraps the production `app.main:app`. It publishes `process_upload` to Redis on confirm. |
 | `worker-ingest` | Celery worker on queue `clinsync.ingest`, `INGEST_CONCURRENCY` (2) processes. Runs `process_upload`: claim, download from `incoming/`, detect the real file type, check archive guards, stage valid documents to `staging/`, record candidates, finish, delete from `incoming/`. Resumes archives from `entries_done`. Never opens a database connection. |
-| `worker-scan` | Celery worker on queue `clinsync.scan` (1 process), running a stub scan task. Exists to prove queue isolation: a saturated ingest pool cannot delay it. |
+| `worker-scan` | Celery worker on queue `clinsync.scan` (1 process), running a stub scan task. Exists to prove queue isolation: a saturated ingest pool cannot delay it. Starts through `poc.celery_app` (the production Celery app plus the stub). |
 | `worker-maint` | Celery worker on `clinsync.maintenance` with **beat embedded** (`-B`). Every 15 s beat publishes the stale sweep (reset files whose heartbeat went silent) and the reconcile sweep (re-enqueue confirmed files nobody claimed — lost messages). The API does the sweeping; this worker only calls it. |
 | `redis` | The broker. Append-only file on (like ElastiCache), data on the named volume `redis-data`. Holds messages only — all state is in PostgreSQL. |
 | `postgres` | PostgreSQL 15: `upload_batch`, `upload_file` (the state machine, claim token, heartbeat, progress), `staged_document` (candidates). Schema in `infra/postgres/init.sql`. |
@@ -98,13 +98,14 @@ docker run --rm --network none clinsync-ingest-poc:dev pytest tests/test_engine_
 
 ## Reading the logs
 
-Every API and worker line is one JSON object with `ts`, `level`, `event`, `logger` and `pid`, plus context such as
-`file_id`, `batch_id`, `task_id`, `attempt` and `claim_token`. Pipe through `jq`:
+Every line our code emits is one JSON object with `ts`, `level`, `event`, `logger` and `pid`, plus context such as
+`file_id`, `batch_id`, `task_id`, `attempt` and `claim_token`. Celery's own lifecycle notices (for example
+`worker: Warm shutdown`) may be plain text, so the examples use `jq -R 'fromjson? | …'` to skip them:
 
 ```bash
-docker compose logs -f --no-log-prefix worker-ingest | jq -c '{ts, event, file_id, attempt, entry_index}'
-docker compose logs -f --no-log-prefix worker-maint  | jq -c 'select(.event|test("sweep")) | {ts, event, reset, requeued, errored}'
-docker compose logs --no-log-prefix api | jq -c 'select(.file_id == "<file-id>")'
+docker compose logs -f --no-log-prefix worker-ingest | jq -R -c 'fromjson? | {ts, event, file_id, attempt, entry_index}'
+docker compose logs -f --no-log-prefix worker-maint  | jq -R -c 'fromjson? | select(.event|test("sweep")) | {ts, event, reset, requeued, errored}'
+docker compose logs --no-log-prefix api | jq -R -c 'fromjson? | select(.file_id == "<file-id>")'
 ```
 
 Events worth knowing:
@@ -126,7 +127,9 @@ Batch progress is also visible without logs: `curl -s localhost:8000/api/v1/uplo
 
 ```
 app/        FastAPI app: routes, services, repositories (SQL), settings, JSON logging, producer-only Celery client
-workers/    Celery app, process_upload, heartbeat thread, internal API client, S3 helper, sweepers, scan stub
+workers/    Celery app, process_upload (with its heartbeat thread), internal API client, S3 helper, sweepers
+poc/        POC-only: /poc/* routes, the scan stub, and the entry points that add them (poc.main, poc.celery_app).
+            Depends on app/ and workers/; nothing depends on it, so it can be deleted before production.
 engine/     pure functions: file-type detection, archive guards, streaming extraction (no framework, no settings)
 infra/      postgres/init.sql, localstack/init-s3.sh
 fixtures/   make_fixtures.py builds every test file into fixtures/out/

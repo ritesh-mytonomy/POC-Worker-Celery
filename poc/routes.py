@@ -12,6 +12,7 @@ from app.db import get_db_session
 from app.logging import get_logger
 from app.repositories import files
 from app.routes.errors import ApiError
+from poc import producer
 
 router = APIRouter(prefix="/poc")
 log = get_logger(__name__)
@@ -104,7 +105,7 @@ def scan_stub(body: ScanStubIn) -> ScanStubOut:
     """Enqueue scan_stub(seconds, enqueued_at) on clinsync.scan (design.md §6.1, R13); 503 if Redis is down."""
     enqueued_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     try:
-        task_id = tasks_client.enqueue_scan_stub(body.seconds, enqueued_at)
+        task_id = producer.enqueue_scan_stub(body.seconds, enqueued_at)
     except Exception as exc:
         log.warning("enqueue_failed", task="scan_stub", error=repr(exc))
         raise ApiError(503, "enqueue_failed", f"scan_stub not published: {exc!r}") from exc

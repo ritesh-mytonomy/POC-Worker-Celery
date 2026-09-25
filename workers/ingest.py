@@ -1,9 +1,10 @@
 """process_upload (design.md §8.1), process_document (§8.2) and process_archive (§8.3)."""
 import os
+import threading
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Protocol
 
 from celery.exceptions import SoftTimeLimitExceeded
 
@@ -15,7 +16,6 @@ from engine.errors import Rejected, Transient
 from engine.file_signature import detect_file_type, mismatch_reason
 from engine.limits import Limits
 from workers.celery_app import app, settings
-from workers.heartbeat import Heartbeat
 from workers.internal_client import BoundClient, FileClaim, FinalStatus, InternalClient, WorkerContractError
 from workers.s3 import S3ConfigError, S3ObjectNotFound, S3Store
 
@@ -69,6 +69,71 @@ def process_document(api: BoundClient, claim: FileClaim, path: Path, limits: Lim
                          s3_key=key, status="processed")        # R5.4
     log.info("staged", file_id=str(claim.file_id), attempt=claim.attempt_count, s3_key=key)
     return FinalStatus("processed")
+
+
+# --- Heartbeat thread (design.md §8.6; R10.1): proves liveness while a file is processed. ---
+# Its own logger name is kept, so its log lines are unchanged since it moved here from workers/heartbeat.py.
+_heartbeat_log = get_logger("workers.heartbeat")
+
+
+class Beats(Protocol):
+    """Anything with a fenced heartbeat() — the token-bound internal client in practice."""
+
+    file_id: object
+
+    def heartbeat(self) -> None:
+        """Refresh heartbeat_at; raise ClaimSuperseded on 409."""
+
+
+class Heartbeat:
+    """Daemon thread calling heartbeat() every `every` seconds until stopped, superseded or refused."""
+
+    def __init__(self, api: Beats, every: float) -> None:
+        """Prepare, but do not start, the thread."""
+        self._api, self._every = api, every
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"heartbeat-{api.file_id}", daemon=True)
+        self.superseded = False
+        self.stop_reason: BaseException | None = None
+        self.beats = 0
+
+    def start(self) -> "Heartbeat":
+        """Start beating; return self so `beat = Heartbeat(...).start()` reads naturally."""
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        """Stop and wait for the thread (bounded by one request timeout)."""
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=15)
+
+    def raise_if_superseded(self) -> None:
+        """Raise if beating stopped for good, so the task stops at its next check (writes are fenced anyway).
+
+        409 → ClaimSuperseded; 401 or another non-retryable 4xx → that same error (a configuration or worker bug).
+        """
+        if self.superseded:
+            raise ClaimSuperseded(self._api.file_id)
+        if self.stop_reason is not None:
+            raise self.stop_reason
+
+    def _run(self) -> None:
+        """Beat until stopped. 409 or a non-retryable error stops for good; Transient keeps beating."""
+        while not self._stop.wait(self._every):
+            try:
+                self._api.heartbeat()
+                self.beats += 1
+            except ClaimSuperseded as exc:
+                self.superseded, self.stop_reason = True, exc
+                _heartbeat_log.warning("heartbeat_superseded", file_id=str(self._api.file_id), beats=self.beats)
+                return
+            except Transient as exc:                                # 5xx, refused, timeout: next beat may work
+                _heartbeat_log.warning("heartbeat_failed", file_id=str(self._api.file_id), error=repr(exc))
+            except Exception as exc:                                # 401, other 4xx, bugs: stop the task too
+                self.stop_reason = exc
+                _heartbeat_log.exception("heartbeat_stopped", file_id=str(self._api.file_id), error=repr(exc))
+                return
 
 
 def poc_delay() -> None:

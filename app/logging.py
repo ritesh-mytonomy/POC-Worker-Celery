@@ -1,4 +1,5 @@
-"""JSON logging for the API and workers: one object per line with ts, level, event, pid, plus extras (R15.1)."""
+"""JSON logging for the API and workers: every line our code emits is one JSON object with ts, level, event, pid,
+plus extras (R15.1, rev 1.4). Celery's own lifecycle notices (e.g. warm shutdown) may be plain text."""
 import json
 import logging
 import sys
@@ -91,14 +92,6 @@ class _DropHealthChecks(logging.Filter):
         """Return False for a /health access record."""
         args = record.args
         return not (isinstance(args, tuple) and len(args) == 5 and str(args[2]).split("?")[0] == "/health")
-
-
-def say_json(msg: str, _stream: Any = None, level: str = "WARNING", name: str = "celery.apps.worker") -> None:
-    """Write `msg` as one JSON line straight to stdout, bypassing logging locks (safe in signal handlers)."""
-    record = logging.makeLogRecord({"msg": msg, "levelname": level, "levelno": logging.getLevelName(level),
-                                    "name": name})
-    sys.__stdout__.write(JsonFormatter().format(record) + "\n")
-    sys.__stdout__.flush()
 
 
 def configure_logging(level: str = "INFO") -> None:
