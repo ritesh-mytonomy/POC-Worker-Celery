@@ -321,7 +321,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 - [x] **14.1 README**
   - Prerequisites, `docker compose up`, `run_all.sh`, how to read logs, the seven services and what each does.
 
-- [ ] **14.2 Demo runbook — S5 and S5b**
+- [x] **14.2 Demo runbook — S5 and S5b**
   - A five-minute script for showing the resume live: which terminal shows what, the exact kill command, what to point at in the logs, and the final assertion.
 
 - [ ] **14.3 Findings note**
