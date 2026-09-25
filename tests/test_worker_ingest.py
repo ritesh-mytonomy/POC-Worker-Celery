@@ -11,9 +11,10 @@ import pytest
 
 from app.config import get_settings
 from app.errors import ClaimSuperseded
-from engine.errors import Rejected, Transient
-from workers.internal_client import FileClaim, FinalStatus
-from workers.s3 import S3ConfigError, S3ObjectNotFound
+from engine.file_checks import Rejected
+from workers.clients import Transient
+from workers.clients import FileClaim, FinalStatus
+from workers.clients import S3ConfigError, S3ObjectNotFound
 
 
 class Recorder:
@@ -125,10 +126,10 @@ def a_claim(file_name: str = "valid.docx", is_archive: bool = False) -> FileClai
 
 @pytest.fixture
 def ingest(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    """workers.ingest with a valid minimal environment."""
+    """workers.tasks with a valid minimal environment."""
     monkeypatch.setenv("INTERNAL_API_KEY", "test-key")
     get_settings.cache_clear()
-    import workers.ingest as module
+    import workers.tasks as module
     yield module
     get_settings.cache_clear()
 
@@ -261,6 +262,6 @@ def test_staging_key_is_deterministic(ingest: Any) -> None:
 
 def test_task_is_registered_under_the_queue_contract_name(ingest: Any) -> None:
     """workers.ingest.process_upload (design.md §6.3), routed to clinsync.ingest."""
-    from workers.celery_app import app
+    from workers.tasks import app
     assert "workers.ingest.process_upload" in app.tasks
     assert app.amqp.router.route({}, "workers.ingest.process_upload")["queue"].name == "clinsync.ingest"

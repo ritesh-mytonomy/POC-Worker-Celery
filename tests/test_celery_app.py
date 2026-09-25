@@ -12,7 +12,7 @@ def conf(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
     """The worker app's configuration, with a valid minimal environment."""
     monkeypatch.setenv("INTERNAL_API_KEY", "test-key")
     get_settings.cache_clear()
-    import workers.celery_app as module
+    import workers.tasks as module
     yield module.app.conf
     get_settings.cache_clear()
 
@@ -45,7 +45,7 @@ def _fresh(code: str) -> Any:
 def test_routes_send_each_task_family_to_its_queue(conf: Any) -> None:
     """Ingest and maintenance routes only; the scan route belongs to poc/celery_app.py (rev 1.4)."""
     assert conf.task_default_queue == "clinsync.ingest"
-    routes = _fresh("import json, workers.celery_app as w; print(json.dumps(w.app.conf.task_routes))")
+    routes = _fresh("import json, workers.tasks as w; print(json.dumps(w.app.conf.task_routes))")
     assert routes == {"workers.ingest.*": {"queue": "clinsync.ingest"},
                       "workers.sweepers.*": {"queue": "clinsync.maintenance"}}
 
@@ -62,16 +62,31 @@ def test_beat_schedule_runs_both_sweeps_every_interval_with_expiry(conf: Any) ->
 
 
 def test_sweep_tasks_are_registered_and_routed_to_maintenance(conf: Any) -> None:
-    """include= registers workers.sweepers; both route to clinsync.maintenance.
+    """workers.tasks registers both sweepers; both route to clinsync.maintenance.
 
     Imports the include= modules exactly as a starting worker does, so the test does not depend on another test
-    having imported workers.sweepers first.
+    having imported workers.tasks first.
     """
-    from workers.celery_app import app
+    from workers.tasks import app
     app.loader.import_default_modules()
-    registered = _fresh("import json, workers.celery_app as w; w.app.loader.import_default_modules(); "
+    registered = _fresh("import json, workers.tasks as w; w.app.loader.import_default_modules(); "
                         "print(json.dumps(sorted(w.app.tasks)))")
     assert not [t for t in registered if t.startswith(("poc.", "workers.scan."))], "production app registers no POC task"
     for name in ("workers.sweepers.run_stale_sweep", "workers.sweepers.run_reconcile_sweep"):
         assert name in app.tasks
         assert app.amqp.router.route({}, name)["queue"].name == "clinsync.maintenance"
+
+
+EXPECTED_PRODUCTION = {"workers.ingest.process_upload", "workers.sweepers.run_stale_sweep",
+                       "workers.sweepers.run_reconcile_sweep"}
+
+
+def test_registered_task_names_are_exactly_the_contract() -> None:
+    """Task names are the §6.3 message contract and must not change: workers.tasks registers exactly the three
+    production names, poc.worker exactly those plus workers.scan.scan_stub (Celery's own celery.* tasks aside)."""
+    production = _fresh("import json, workers.tasks as w; w.app.loader.import_default_modules(); "
+                        "print(json.dumps(sorted(t for t in w.app.tasks if not t.startswith('celery.'))))")
+    with_poc = _fresh("import json, poc.worker as p; p.app.loader.import_default_modules(); "
+                      "print(json.dumps(sorted(t for t in p.app.tasks if not t.startswith('celery.'))))")
+    assert set(production) == EXPECTED_PRODUCTION
+    assert set(with_poc) == EXPECTED_PRODUCTION | {"workers.scan.scan_stub"}

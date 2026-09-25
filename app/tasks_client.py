@@ -1,4 +1,4 @@
-"""The API's producer-only Celery client (design.md §6.2a). Never imports workers.celery_app."""
+"""The API's producer-only Celery client (design.md §6.2a). Never imports the worker app (workers.tasks)."""
 from functools import lru_cache
 
 import kombu.pools

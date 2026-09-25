@@ -9,9 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_production_entry_points_load_no_poc_module() -> None:
-    """In a fresh interpreter, app.main and workers.celery_app (with its include= modules, as a worker loads them)
-    pull in no poc module."""
-    code = ("import sys, app.main, workers.celery_app as w; w.app.loader.import_default_modules(); "
+    """In a fresh interpreter, app.main and workers.tasks (as a worker loads it) pull in no poc module."""
+    code = ("import sys, app.main, workers.tasks as w; w.app.loader.import_default_modules(); "
             "print(sorted(m for m in sys.modules if m == 'poc' or m.startswith('poc.')))")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
     assert out.strip().splitlines()[-1] == "[]"
@@ -30,3 +29,21 @@ def test_production_source_never_imports_or_includes_poc() -> None:
             elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.startswith("poc."):
                 offenders.append(f"{path.relative_to(ROOT)}: string {node.value!r}")
     assert offenders == []
+
+
+def _loaded(modules: str, prefixes: tuple[str, ...]) -> list[str]:
+    """Import `modules` in a fresh interpreter; return every loaded module under the given prefixes."""
+    code = (f"import sys, {modules}; "
+            f"print(sorted(m for m in sys.modules if any(m == p or m.startswith(p + '.') for p in {prefixes!r})))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+    return eval(out.strip().splitlines()[-1])  # noqa: S307 — our own printed list
+
+
+def test_scan_worker_never_loads_the_fastapi_app() -> None:
+    """poc.worker (worker-scan) loads neither app.main nor FastAPI: TASK_SCAN_STUB comes from poc/__init__.py."""
+    assert _loaded("poc.worker", ("app.main", "fastapi", "starlette", "poc.main")) == []
+
+
+def test_api_never_loads_the_worker_app() -> None:
+    """poc.main (the api) loads neither workers.tasks nor Celery's worker machinery (design.md §6.2a)."""
+    assert _loaded("poc.main", ("workers", "poc.worker")) == []

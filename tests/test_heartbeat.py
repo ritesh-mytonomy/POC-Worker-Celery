@@ -5,9 +5,9 @@ import time
 import pytest
 
 from app.errors import ClaimSuperseded
-from engine.errors import Transient
-from workers.ingest import Heartbeat
-from workers.internal_client import InternalAuthError, WorkerContractError
+from workers.clients import Transient
+from workers.tasks import Heartbeat
+from workers.clients import InternalAuthError, WorkerContractError
 
 
 class FakeApi:

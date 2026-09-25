@@ -9,8 +9,8 @@ import httpx
 import pytest
 
 from app.errors import ClaimSuperseded
-from engine.errors import Transient
-from workers.internal_client import (
+from workers.clients import Transient
+from workers.clients import (
     BoundClient, FileClaim, FinalStatus, InternalAuthError, InternalClient, WorkerContractError,
 )
 

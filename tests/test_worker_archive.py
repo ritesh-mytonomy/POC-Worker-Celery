@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 
 from app.config import get_settings
-from engine.errors import Rejected
-from workers.internal_client import FileClaim, FinalStatus
+from engine.file_checks import Rejected
+from workers.clients import FileClaim, FinalStatus
 from tests.engine_helpers import POC_LIMITS
 
 ORG, BATCH, FILE = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
@@ -121,10 +121,10 @@ def write_zip(path: Path, members: list[tuple[str, bytes]]) -> Path:
 
 @pytest.fixture
 def ingest(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    """workers.ingest with a valid minimal environment."""
+    """workers.tasks with a valid minimal environment."""
     monkeypatch.setenv("INTERNAL_API_KEY", "test-key")
     get_settings.cache_clear()
-    import workers.ingest as module
+    import workers.tasks as module
     yield module
     get_settings.cache_clear()
 
@@ -358,7 +358,7 @@ def test_superseded_mid_loop_stops_before_the_next_entry(ingest: Any, docs: dict
 
 def test_non_retryable_heartbeat_error_also_stops_the_loop(ingest: Any, docs: dict[str, bytes], tmp_path: Path) -> None:
     """A 401 seen by the heartbeat (rev 1.3) is re-raised at the next check; the loop stops the same way."""
-    from workers.internal_client import InternalAuthError
+    from workers.clients import InternalAuthError
     path, _ = mixed(docs, tmp_path)
     api, store = StatefulApi(), MemoryStore()
     with pytest.raises(InternalAuthError):

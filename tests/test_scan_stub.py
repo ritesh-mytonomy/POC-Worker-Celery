@@ -8,19 +8,19 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from poc import producer
+import poc.main as producer
 from app.config import get_settings
 from app.constants import QUEUE_SCAN
-from poc.constants import TASK_SCAN_STUB
+from poc import TASK_SCAN_STUB
 from poc.main import app
 
 
 @pytest.fixture
 def scan(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    """poc.scan_stub with a valid minimal environment."""
+    """poc.worker (the scan stub) with a valid minimal environment."""
     monkeypatch.setenv("INTERNAL_API_KEY", "test-key")
     get_settings.cache_clear()
-    import poc.scan_stub as module
+    import poc.worker as module
     yield module
     get_settings.cache_clear()
 
@@ -40,12 +40,12 @@ def test_scan_stub_logs_start_delay_and_finish(scan: Any, monkeypatch: pytest.Mo
 
 
 def test_scan_stub_is_registered_on_the_scan_queue() -> None:
-    """In a fresh interpreter (as worker-scan starts), poc.celery_app registers workers.scan.scan_stub and routes it
+    """In a fresh interpreter (as worker-scan starts), poc.worker registers workers.scan.scan_stub and routes it
     to clinsync.scan. Fresh, because Celery caches its route table per process."""
     import os
     import subprocess
     import sys
-    code = ("from poc.celery_app import app; from poc.constants import TASK_SCAN_STUB as t; "
+    code = ("from poc.worker import app; from poc import TASK_SCAN_STUB as t; "
             "print(t in app.tasks, app.amqp.router.route({}, t)['queue'].name)")
     env = {**os.environ, "INTERNAL_API_KEY": os.environ.get("INTERNAL_API_KEY", "test-key")}
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, env=env).stdout

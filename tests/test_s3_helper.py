@@ -15,8 +15,8 @@ from botocore.exceptions import (
 )
 from botocore.stub import Stubber
 
-from engine.errors import Transient
-from workers.s3 import CHUNK, S3ConfigError, S3ObjectNotFound, S3Store
+from workers.clients import Transient
+from workers.clients import CHUNK, S3ConfigError, S3ObjectNotFound, S3Store
 
 BUCKET = "clinsync-poc"
 
