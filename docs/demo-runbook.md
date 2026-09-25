@@ -41,14 +41,14 @@ watch -n1 'docker compose exec -T postgres psql -U clinsync -d clinsync -c "SELE
 **T3 — worker log** (re-attaches by itself after the container is killed):
 ```bash
 while true; do docker compose logs -f --no-log-prefix --since 2s worker-ingest 2>/dev/null \
-  | jq -c --unbuffered 'select(.event|test("claim_ok|claim_lost|entry_staged|finished|WorkerLost|exited")) | {t: .ts[11:19], event: .event[0:60], attempt, entry: .entry_index, pid}'; \
+  | jq -R -c --unbuffered 'fromjson? | select(.event|test("claim_ok|claim_lost|entry_staged|finished|WorkerLost|exited")) | {t: .ts[11:19], event: .event[0:60], attempt, entry: .entry_index, pid}'; \
   echo "---- worker-ingest gone; re-attaching ----"; sleep 1; done
 ```
 
 **T4 — recovery** (only the sweeps that actually reset something):
 ```bash
 docker compose logs -f --no-log-prefix --since 1s api \
-  | jq -c --unbuffered 'select(.event=="stale_sweep" and .reset>0) | {t: .ts[11:19], event, reset, files: [.file_ids[]|.[0:8]]}'
+  | jq -R -c --unbuffered 'fromjson? | select(.event=="stale_sweep" and .reset>0) | {t: .ts[11:19], event, reset, files: [.file_ids[]|.[0:8]]}'
 ```
 
 ---
@@ -126,7 +126,7 @@ processed at +96.2 s; T4 showed exactly one `stale_sweep reset: 1`, at the secon
 |---|---|
 | T1 fails straight away (connection refused, LocalStack unhealthy) | `docker compose ps`; if LocalStack is not healthy, check `LOCALSTACK_AUTH_TOKEN` in `.env`, then `docker compose up -d --wait`. Show `/tmp/s5-good.txt` meanwhile. |
 | T3 shows nothing | It only shows new lines — it starts showing once T1 confirms. If it stays empty, press Ctrl-C and re-run it. |
-| T4 shows nothing after 60 s | Check the sweeper: `docker compose logs --since 2m worker-maint \| jq -c 'select(.event|test("sweep"))'`. `sweep_failed` or no lines → `docker compose restart worker-maint`; the next sweep resets it. |
+| T4 shows nothing after 60 s | Check the sweeper: `docker compose logs --since 2m worker-maint \| jq -R -c 'fromjson? \| select(.event|test("sweep"))'`. `sweep_failed` or no lines → `docker compose restart worker-maint`; the next sweep resets it. |
 | The reset takes longer than ~60 s | Still fine up to ~90 s (the script allows 120 s + remaining work). Keep talking about why heartbeats, not timers, detect dead workers. |
 | A `FAIL` line appears | Re-run with `--keep` after the demo to inspect; in the room, show `/tmp/s5-good.txt` and the timeline from the last good run. |
 | Anything leaves the worker in a strange state | `docker compose up -d --force-recreate worker-ingest` restores the normal worker (no entry delay). The scripts do this themselves at the end, even on failure. |

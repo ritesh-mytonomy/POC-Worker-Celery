@@ -1,4 +1,8 @@
-"""POC-only routes (design.md §6.1): stand-ins for the presign flow and a duplicate-delivery helper for S6."""
+"""The POC's API entry point (api runs `uvicorn poc.main:app`): the production app plus the /poc routes.
+
+Stand-ins for parts of the real product (design.md §6.1): /poc/seed, /poc/enqueue, /poc/scan-stub. Imports app/
+only — never workers/ — so the API process still never loads the worker app (design.md §6.2a).
+"""
 import uuid
 from datetime import datetime, timezone
 
@@ -12,9 +16,23 @@ from app.db import get_db_session
 from app.logging import get_logger
 from app.repositories import files
 from app.routes.errors import ApiError
+from app.constants import QUEUE_SCAN
+from poc import TASK_SCAN_STUB
+
+
+def enqueue_scan_stub(seconds: float, enqueued_at: str) -> str:
+    """Publish scan_stub on clinsync.scan (R13); return the task id. Raises if Redis is unreachable."""
+    producer = tasks_client.get_producer()
+    try:
+        return producer.send_task(TASK_SCAN_STUB, kwargs={"seconds": seconds, "enqueued_at": enqueued_at},
+                                  queue=QUEUE_SCAN).id
+    except Exception:
+        tasks_client.reset_producer()
+        raise
+
 
 router = APIRouter(prefix="/poc")
-log = get_logger(__name__)
+log = get_logger("poc.routes")   # the logger name since rev 1.4 commit 1
 
 
 class SeedFileIn(BaseModel):
@@ -104,9 +122,15 @@ def scan_stub(body: ScanStubIn) -> ScanStubOut:
     """Enqueue scan_stub(seconds, enqueued_at) on clinsync.scan (design.md §6.1, R13); 503 if Redis is down."""
     enqueued_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     try:
-        task_id = tasks_client.enqueue_scan_stub(body.seconds, enqueued_at)
+        task_id = enqueue_scan_stub(body.seconds, enqueued_at)
     except Exception as exc:
         log.warning("enqueue_failed", task="scan_stub", error=repr(exc))
         raise ApiError(503, "enqueue_failed", f"scan_stub not published: {exc!r}") from exc
     log.info("scan_stub_enqueued", task_id=task_id, enqueued_at=enqueued_at)
     return ScanStubOut(task_id=task_id, enqueued_at=enqueued_at)
+
+
+# The production app with the POC routes added. Nothing in app/ knows about this.
+from app.main import app  # noqa: E402
+
+app.include_router(router)

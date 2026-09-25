@@ -1,11 +1,11 @@
-"""The API's producer-only Celery client (design.md §6.2a). Never imports workers.celery_app."""
+"""The API's producer-only Celery client (design.md §6.2a). Never imports the worker app (workers.tasks)."""
 from functools import lru_cache
 
 import kombu.pools
 from celery import Celery
 
 from app.config import get_settings
-from app.constants import QUEUE_INGEST, QUEUE_SCAN, TASK_PROCESS_UPLOAD, TASK_SCAN_STUB
+from app.constants import QUEUE_INGEST, TASK_PROCESS_UPLOAD
 
 
 @lru_cache
@@ -30,17 +30,6 @@ def enqueue_process_upload(file_id: str, organization_id: str) -> None:
     try:
         producer.send_task(TASK_PROCESS_UPLOAD, kwargs={"file_id": file_id, "organization_id": organization_id},
                            queue=QUEUE_INGEST)
-    except Exception:
-        reset_producer()
-        raise
-
-
-def enqueue_scan_stub(seconds: float, enqueued_at: str) -> str:
-    """Publish scan_stub on clinsync.scan (R13); return the task id. Raises if Redis is unreachable."""
-    producer = get_producer()
-    try:
-        return producer.send_task(TASK_SCAN_STUB, kwargs={"seconds": seconds, "enqueued_at": enqueued_at},
-                                  queue=QUEUE_SCAN).id
     except Exception:
         reset_producer()
         raise

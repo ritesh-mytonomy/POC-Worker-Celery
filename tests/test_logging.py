@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from app.logging import JsonFormatter, configure_logging, get_logger, say_json
+from app.logging import JsonFormatter, configure_logging, get_logger
 
 
 @pytest.fixture
@@ -61,13 +61,6 @@ def test_uvicorn_access_record_is_structured() -> None:
                                ("127.0.0.1:5000", "GET", "/health", "1.1", 200), None)
     line = json.loads(JsonFormatter().format(record))
     assert line["event"] == "http_request" and line["path"] == "/health" and line["status"] == 200
-
-
-def test_say_json_writes_one_json_line(capfd: pytest.CaptureFixture[str]) -> None:
-    """say_json, used in place of Celery's safe_say, writes a JSON line to stdout."""
-    say_json("worker: Warm shutdown (MainProcess)")
-    line = json.loads(capfd.readouterr().out.strip())
-    assert line["event"] == "worker: Warm shutdown (MainProcess)" and line["pid"] == os.getpid()
 
 
 def _access_record(path: str) -> logging.LogRecord:

@@ -1,25 +1,157 @@
-"""process_upload (design.md §8.1), process_document (§8.2) and process_archive (§8.3)."""
+"""The workers' Celery app and every task it runs (design.md §7, §8.1–§8.7).
+
+Sections, in order: Celery app and config · Heartbeat · process_upload / process_document / process_archive ·
+sweeper tasks. Task names are set explicitly and never change (the §6.3 message contract); each section keeps its
+original logger name so log output is identical. Workers never open a database connection (R4.1).
+"""
 import os
+import threading
 import time
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Protocol
 
+from celery import Celery, signals
 from celery.exceptions import SoftTimeLimitExceeded
 
-from app.constants import TASK_PROCESS_UPLOAD
+from app.config import get_settings
+from app.constants import (
+    QUEUE_INGEST, QUEUE_MAINTENANCE, TASK_PROCESS_UPLOAD, TASK_RECONCILE_SWEEP, TASK_STALE_SWEEP,
+)
 from app.errors import ClaimSuperseded
-from app.logging import get_logger
-from engine.archive import UNREADABLE, extract_streaming, inspect_archive
-from engine.errors import Rejected, Transient
-from engine.file_signature import detect_file_type, mismatch_reason
-from engine.limits import Limits
-from workers.celery_app import app, settings
-from workers.heartbeat import Heartbeat
-from workers.internal_client import BoundClient, FileClaim, FinalStatus, InternalClient, WorkerContractError
-from workers.s3 import S3ConfigError, S3ObjectNotFound, S3Store
+from app.logging import configure_logging, get_logger
+from engine.file_checks import (
+    UNREADABLE, Limits, Rejected, detect_file_type, extract_streaming, inspect_archive, mismatch_reason,
+)
+from workers.clients import (
+    BoundClient, FileClaim, FinalStatus, InternalClient, S3ConfigError, S3ObjectNotFound, S3Store, Transient,
+    WorkerContractError,
+)
 
-log = get_logger(__name__)
+# ============================================================================ Celery app and config
+
+configure_logging()
+_app_log = get_logger("workers.celery_app")
+
+
+@signals.setup_logging.connect
+def _keep_json_logging(**_: Any) -> None:
+    """Stop Celery replacing our JSON logging with its own format."""
+    configure_logging()
+
+
+@signals.celeryd_init.connect
+def _log_start_instead_of_banner(sender: str, instance: Any, options: dict[str, Any], **_: Any) -> None:
+    """Suppress the plain-text startup banner and log its key facts as JSON."""
+    instance.quiet = True
+    _app_log.info("worker_starting", hostname=sender,
+             queues=options.get("queues"), concurrency=options.get("concurrency"))
+
+
+settings = get_settings()
+
+app = Celery("clinsync", broker=settings.REDIS_URL)   # every task below is defined in this module
+
+app.conf.update(
+    task_acks_late=True,                 # R9.1 — ack after the body, not on receipt
+    task_reject_on_worker_lost=True,     # R9.2 — killed child → message back on the queue
+    worker_prefetch_multiplier=1,        # R9.3 — one message per process
+    task_ignore_result=True,             # state is in PostgreSQL, not a result backend
+    task_soft_time_limit=settings.TASK_SOFT_TIME_LIMIT,
+    task_time_limit=settings.TASK_TIME_LIMIT,
+    broker_transport_options={"visibility_timeout": settings.VISIBILITY_TIMEOUT},  # R9.4
+    broker_connection_retry_on_startup=True,
+    task_default_queue=QUEUE_INGEST,
+    task_routes={
+        "workers.ingest.*":   {"queue": QUEUE_INGEST},
+        "workers.sweepers.*": {"queue": QUEUE_MAINTENANCE},
+    },
+    # Each sweep message expires after one interval: if the consumer is stuck (or beat runs separately, as in
+    # AWS), stale sweeps are discarded on receipt instead of all running at once afterwards (task 11.1).
+    beat_schedule={
+        "stale-sweep":     {"task": TASK_STALE_SWEEP, "schedule": settings.SWEEP_INTERVAL_SECONDS,
+                            "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},
+        "reconcile-sweep": {"task": TASK_RECONCILE_SWEEP, "schedule": settings.SWEEP_INTERVAL_SECONDS,
+                            "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},
+    },
+    beat_schedule_filename="/tmp/celerybeat-schedule",   # /srv is not writable by the app user
+)
+try:
+    settings.validate()                  # R9.5 — refuse to start on a bad combination
+except ValueError as exc:
+    _app_log.error("invalid_configuration", error=str(exc))
+    raise SystemExit(1) from exc
+
+
+# ============================================================================ Heartbeat
+# design.md §8.6; R10.1: proves liveness while a file is processed.
+
+_heartbeat_log = get_logger("workers.heartbeat")
+
+
+class Beats(Protocol):
+    """Anything with a fenced heartbeat() — the token-bound internal client in practice."""
+
+    file_id: object
+
+    def heartbeat(self) -> None:
+        """Refresh heartbeat_at; raise ClaimSuperseded on 409."""
+
+
+class Heartbeat:
+    """Daemon thread calling heartbeat() every `every` seconds until stopped, superseded or refused."""
+
+    def __init__(self, api: Beats, every: float) -> None:
+        """Prepare, but do not start, the thread."""
+        self._api, self._every = api, every
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name=f"heartbeat-{api.file_id}", daemon=True)
+        self.superseded = False
+        self.stop_reason: BaseException | None = None
+        self.beats = 0
+
+    def start(self) -> "Heartbeat":
+        """Start beating; return self so `beat = Heartbeat(...).start()` reads naturally."""
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        """Stop and wait for the thread (bounded by one request timeout)."""
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=15)
+
+    def raise_if_superseded(self) -> None:
+        """Raise if beating stopped for good, so the task stops at its next check (writes are fenced anyway).
+
+        409 → ClaimSuperseded; 401 or another non-retryable 4xx → that same error (a configuration or worker bug).
+        """
+        if self.superseded:
+            raise ClaimSuperseded(self._api.file_id)
+        if self.stop_reason is not None:
+            raise self.stop_reason
+
+    def _run(self) -> None:
+        """Beat until stopped. 409 or a non-retryable error stops for good; Transient keeps beating."""
+        while not self._stop.wait(self._every):
+            try:
+                self._api.heartbeat()
+                self.beats += 1
+            except ClaimSuperseded as exc:
+                self.superseded, self.stop_reason = True, exc
+                _heartbeat_log.warning("heartbeat_superseded", file_id=str(self._api.file_id), beats=self.beats)
+                return
+            except Transient as exc:                                # 5xx, refused, timeout: next beat may work
+                _heartbeat_log.warning("heartbeat_failed", file_id=str(self._api.file_id), error=repr(exc))
+            except Exception as exc:                                # 401, other 4xx, bugs: stop the task too
+                self.stop_reason = exc
+                _heartbeat_log.exception("heartbeat_stopped", file_id=str(self._api.file_id), error=repr(exc))
+                return
+
+
+# ============================================================================ process_upload / process_document / process_archive
+
+log = get_logger("workers.ingest")
 LIMITS = Limits.from_settings(settings)          # engine/ takes limits as arguments, not settings
 # R11.1. OSError and MemoryError are environment problems (a full disk) and stay retryable (rev 1.3). The
 # deliberately non-retryable errors are caught before this tuple is reached (see process_upload).
@@ -206,3 +338,32 @@ def process_upload(self: Any, file_id: str, organization_id: str) -> None:
         beat.stop()
         if local is not None:
             local.unlink(missing_ok=True)
+
+
+# ============================================================================ sweeper tasks
+# design.md §8.7; R10.4, R11.4, R11.5: run by beat in worker-maint, executed by the API.
+
+_sweep_log = get_logger("workers.sweepers")
+
+
+def _sweep(kind: str, task_id: str | None) -> dict[str, int] | None:
+    """Run one sweep; log its counts, or log the failure and let the next beat tick try again (no Celery retry)."""
+    try:
+        counts = internal().sweep(kind)
+    except Exception as exc:                          # API down, wrong key, bug: never retried, never piled up
+        _sweep_log.warning("sweep_failed", sweep=kind, task_id=task_id, error=repr(exc))
+        return None
+    _sweep_log.info(f"{kind}_sweep", task_id=task_id, **counts)
+    return counts
+
+
+@app.task(bind=True, name=TASK_STALE_SWEEP, ignore_result=True)
+def run_stale_sweep(self: Any) -> dict[str, int] | None:
+    """Reset or error files whose worker stopped heartbeating (R11.4)."""
+    return _sweep("stale", self.request.id)
+
+
+@app.task(bind=True, name=TASK_RECONCILE_SWEEP, ignore_result=True)
+def run_reconcile_sweep(self: Any) -> dict[str, int] | None:
+    """Re-enqueue confirmed files nobody claimed, or error them when attempts are spent (R11.5)."""
+    return _sweep("reconcile", self.request.id)

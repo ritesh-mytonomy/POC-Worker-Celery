@@ -5,10 +5,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# Block system sleep for the whole run: a suspended laptop stalls every scenario for hours.
+# Block system sleep and lid-close suspend for the whole run: a suspended laptop stalls every scenario for hours
+# (--what=sleep alone does not cover closing the lid).
 if [ -z "${RUN_ALL_INHIBITED:-}" ]; then
   export RUN_ALL_INHIBITED=1
-  exec systemd-inhibit --what=sleep --who="clinsync run_all" --why="scenario suite running" --mode=block "$0" "$@" \
+  exec systemd-inhibit --what=sleep:handle-lid-switch --who="clinsync run_all" --why="scenario suite running" --mode=block "$0" "$@" \
     || { echo "systemd-inhibit failed: disable automatic suspend, then run again with RUN_ALL_INHIBITED=1"; exit 3; }
 fi
 LOGS=run_logs

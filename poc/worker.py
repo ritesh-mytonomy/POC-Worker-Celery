@@ -1,13 +1,20 @@
-"""scan_stub (design.md §6.3; R13): proves the scan queue is isolated from a saturated ingest pool."""
+"""The scan worker's entry point (worker-scan runs `celery -A poc.worker`): workers.tasks + the scan stub.
+
+scan_stub proves the scan queue is isolated from a saturated ingest pool (design.md §6.3; R13). Loads neither the
+FastAPI app nor anything else from the API side.
+"""
 import time
 from datetime import datetime, timezone
 from typing import Any
 
-from app.constants import TASK_SCAN_STUB
+from app.constants import QUEUE_SCAN
 from app.logging import get_logger
-from workers.celery_app import app
+from poc import TASK_SCAN_STUB
+from workers.tasks import app
 
-log = get_logger(__name__)
+app.conf.task_routes = {**app.conf.task_routes, "workers.scan.*": {"queue": QUEUE_SCAN}}
+
+log = get_logger("poc.scan_stub")
 
 
 @app.task(bind=True, name=TASK_SCAN_STUB, ignore_result=True)

@@ -7,16 +7,17 @@ from typing import Any
 
 import pytest
 
-from engine.errors import Rejected, Transient
+from engine.file_checks import Rejected
+from workers.clients import Transient
 from tests.test_worker_archive import Beat, MemoryStore, StatefulApi, claim
 from tests.test_worker_ingest import FakeStore, Recorder, a_claim, finals, run
 from tests.test_worker_ingest import ingest  # noqa: F401  (fixture)
 from tests.engine_helpers import POC_LIMITS
-from workers.internal_client import FinalStatus
-from workers.s3 import S3ObjectNotFound
+from workers.clients import FinalStatus
+from workers.clients import S3ObjectNotFound
 
 ROOT = Path(__file__).resolve().parents[1]
-TRANSIENT_RAISERS = {"workers/s3.py", "workers/internal_client.py"}
+TRANSIENT_RAISERS = {"workers/clients.py"}
 
 
 def test_only_the_s3_helper_and_internal_client_raise_transient() -> None:
@@ -59,7 +60,7 @@ def test_bad_zip_on_open_is_archive_is_damaged(ingest: Any, fixtures_dir: Path, 
         raise zipfile.BadZipFile("File is not a zip file")
 
     monkeypatch.setattr(ingest.zipfile, "ZipFile", bad)
-    monkeypatch.setattr(ingest, "detect_file_type", lambda *_: __import__("engine.file_signature").file_signature
+    monkeypatch.setattr(ingest, "detect_file_type", lambda *_: __import__("engine.file_checks").file_checks
                         .Detection("zip"))
     with pytest.raises(Rejected, match="^Archive is damaged$"):
         ingest.process_archive(StatefulApi(), claim(), fixtures_dir / "mixed.zip", Beat(), POC_LIMITS, MemoryStore())

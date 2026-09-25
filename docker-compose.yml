@@ -65,7 +65,7 @@ services:
 
   api:
     <<: *app
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "poc.main:app", "--host", "0.0.0.0", "--port", "8000"]   # POC wrapper: app.main:app + /poc/*
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -83,15 +83,15 @@ services:
 
   worker-ingest:
     <<: *worker
-    command: celery -A workers.celery_app worker -Q clinsync.ingest -c ${INGEST_CONCURRENCY:-2} -n ingest@%h
+    command: celery -A workers.tasks worker -Q clinsync.ingest -c ${INGEST_CONCURRENCY:-2} -n ingest@%h
 
   worker-scan:
     <<: *worker
-    command: celery -A workers.celery_app worker -Q clinsync.scan -c 1 -n scan@%h
+    command: celery -A poc.worker worker -Q clinsync.scan -c 1 -n scan@%h   # POC wrapper: workers.tasks + scan stub
 
   worker-maint:
     <<: *worker
-    command: celery -A workers.celery_app worker -Q clinsync.maintenance -c 1 -B -n maint@%h
+    command: celery -A workers.tasks worker -Q clinsync.maintenance -c 1 -B -n maint@%h
 
 volumes:
   redis-data:

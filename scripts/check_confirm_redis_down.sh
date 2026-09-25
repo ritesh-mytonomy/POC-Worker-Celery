@@ -31,8 +31,8 @@ BODY=$(cat body.tmp); rm -f body.tmp
 CODE=${OUT% *}; SECS=${OUT#* }
 echo "confirm -> HTTP $CODE in ${SECS}s: $BODY"
 
-LOGGED=$(docker compose logs --no-log-prefix --since "$SINCE" api | jq -c --arg f "$FILE" \
-  'select(.event == "enqueue_failed" and .file_id == $f) | {event, file_id, error}' | head -1)
+LOGGED=$(docker compose logs --no-log-prefix --since "$SINCE" api | jq -R -c --arg f "$FILE" \
+  'fromjson? | select(.event == "enqueue_failed" and .file_id == $f) | {event, file_id, error}' | head -1)
 echo "api log: $LOGGED"
 
 fail=0

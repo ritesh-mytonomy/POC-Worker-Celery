@@ -7,11 +7,12 @@ import pytest
 from celery.exceptions import Retry, SoftTimeLimitExceeded
 
 from app.errors import ClaimSuperseded
-from engine.errors import Rejected, Transient
+from engine.file_checks import Rejected
+from workers.clients import Transient
 from tests.test_worker_ingest import FakeBound, FakeInternal, FakeStore, Recorder, a_claim, finals
 from tests.test_worker_ingest import ingest  # noqa: F401  (fixture)
-from workers.internal_client import FileClaim, FinalStatus, InternalAuthError, WorkerContractError
-from workers.s3 import S3ConfigError, S3ObjectNotFound
+from workers.clients import FileClaim, FinalStatus, InternalAuthError, WorkerContractError
+from workers.clients import S3ConfigError, S3ObjectNotFound
 
 
 def attempt(n: int) -> FileClaim:

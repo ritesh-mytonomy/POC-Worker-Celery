@@ -40,12 +40,14 @@ Three rules hold everywhere:
 | `localstack` | `localstack/localstack` | S3 on `:4566`. Bucket created by an init hook |
 | `redis` | `redis:7-alpine --appendonly yes` | Broker. AOF on, matching ElastiCache |
 | `postgres` | `postgres:15-alpine` | State. Schema applied by init script |
-| `api` | `uvicorn app.main:app --host 0.0.0.0 --port 8000` | Public + internal endpoints, enqueues tasks |
-| `worker-ingest` | `celery -A workers.celery_app worker -Q clinsync.ingest -c ${INGEST_CONCURRENCY} -n ingest@%h` | `process_upload` |
-| `worker-scan` | `celery -A workers.celery_app worker -Q clinsync.scan -c 1 -n scan@%h` | Stub scan task — proves isolation |
-| `worker-maint` | `celery -A workers.celery_app worker -Q clinsync.maintenance -c 1 -B -n maint@%h` | Sweepers, with beat embedded |
+| `api` | `uvicorn poc.main:app --host 0.0.0.0 --port 8000` (rev 1.4: the POC wrapper around `app.main:app`) | Public + internal endpoints, enqueues tasks; `/poc/*` helpers |
+| `worker-ingest` | `celery -A workers.tasks worker -Q clinsync.ingest -c ${INGEST_CONCURRENCY} -n ingest@%h` | `process_upload` |
+| `worker-scan` | `celery -A poc.worker worker -Q clinsync.scan -c 1 -n scan@%h` (rev 1.4: the production app plus the stub) | Stub scan task — proves isolation |
+| `worker-maint` | `celery -A workers.tasks worker -Q clinsync.maintenance -c 1 -B -n maint@%h` | Sweepers, with beat embedded |
 
 `-B` embeds beat in one worker. Acceptable because exactly one `worker-maint` runs. In AWS, beat becomes its own single-instance ECS service.
+
+**POC-only code lives in `poc/` and the dependency points one way** (rev 1.4): `poc/` may import `app/` and `workers/`; nothing in `app/` or `workers/` imports or names `poc/` (tested). `poc/main.py` and `poc/worker.py` are thin entry points that add the POC routes and the scan stub to the production app objects; `TASK_SCAN_STUB` lives in `poc/__init__.py`, so the scan worker never loads the FastAPI app and the API never loads the worker app (tested). Deleting `poc/` and pointing the two commands back at `app.main:app` / `workers.tasks` leaves production intact.
 
 ---
 
@@ -76,23 +78,22 @@ Mirrors the house layering (LLD §D1) at POC scale. Built at the **root of the w
 │   │   ├── uploads.py             confirm → enqueue
 │   │   └── sweeps.py              stale + reconcile
 │   ├── routes/
-│   │   ├── poc.py                 /poc/seed, /poc/scan-stub
 │   │   ├── uploads.py             confirm, batch status, staged
 │   │   └── internal.py            /internal/*
 │   ├── constants.py               queue and task names, shared with workers/
 │   └── tasks_client.py            producer-only Celery instance (§6.2a)
 ├── engine/                        no FastAPI, no Celery, no network — pure functions
-│   ├── limits.py                  Limits dataclass — engine takes limits as arguments
-│   ├── file_signature.py          detect_file_type() → Detection, mismatch_reason()
-│   ├── archive.py                 inspect_archive(), extract_streaming(), assert_safe_path()
-│   └── errors.py                  Rejected (deterministic) vs Transient
-├── workers/
-│   ├── celery_app.py              config (§7), routes, beat schedule
-│   ├── internal_client.py         typed httpx client for /internal/*, carries claim token
-│   ├── heartbeat.py               background thread
-│   ├── ingest.py                  process_upload
-│   ├── scan.py                    scan_stub
-│   └── sweepers.py                run_stale_sweep, run_reconcile_sweep
+│   └── file_checks.py             limits · Rejected · detect_file_type()/mismatch_reason() · inspect_archive()/
+│                                  assert_safe_path() · extract_streaming() — engine takes limits as arguments
+├── workers/                       never opens a database connection
+│   ├── tasks.py                   Celery app and config (§7) · Heartbeat · process_upload / process_document /
+│   │                              process_archive · run_stale_sweep / run_reconcile_sweep
+│   └── clients.py                 Transient · Internal API client (carries the claim token) · S3 store — each with
+│                                  its error mapping; the only place that raises Transient
+├── poc/                           POC-only (rev 1.4); imports app/ and workers/, never imported by them
+│   ├── __init__.py                TASK_SCAN_STUB (shared by both entry points without loading each other)
+│   ├── main.py                    api entry point: app.main:app + /poc/seed, /poc/enqueue, /poc/scan-stub
+│   └── worker.py                  worker-scan entry point: workers.tasks + the scan route and scan_stub
 ├── fixtures/
 │   └── make_fixtures.py           generates every test file (§10.1)
 ├── scripts/
@@ -295,6 +296,8 @@ SET status = EXCLUDED.status, s3_key = EXCLUDED.s3_key,
 
 The API does not import `workers.celery_app`. `app/tasks_client.py` builds its own producer-only instance, sharing queue and task names through `app/constants.py`:
 
+(Rev 1.4: `enqueue_scan_stub` moved to `poc/main.py` and `TASK_SCAN_STUB` to `poc/__init__.py`; they use this producer. The `workers.scan.* → clinsync.scan` route moved to `poc/worker.py`. The §6.3 task name is unchanged.)
+
 ```python
 # app/tasks_client.py
 producer = Celery("clinsync-api", broker=settings.REDIS_URL)
@@ -334,9 +337,8 @@ Celery's publish defaults retry and can block for seconds when Redis is down, br
 ## 7. Celery configuration
 
 ```python
-# workers/celery_app.py
-app = Celery("clinsync", broker=settings.REDIS_URL,
-             include=["workers.ingest", "workers.sweepers", "workers.scan"])  # rev 1.3 — task modules
+# workers/tasks.py — every task is defined in this module, so no include= (rev 1.4)
+app = Celery("clinsync", broker=settings.REDIS_URL)
 
 app.conf.update(
     task_acks_late=True,                 # R9.1 — ack after the body, not on receipt
@@ -350,7 +352,6 @@ app.conf.update(
     task_default_queue="clinsync.ingest",
     task_routes={
         "workers.ingest.*":   {"queue": "clinsync.ingest"},
-        "workers.scan.*":     {"queue": "clinsync.scan"},
         "workers.sweepers.*": {"queue": "clinsync.maintenance"},
     },
     beat_schedule={
@@ -380,9 +381,9 @@ settings.validate()                      # R9.5 — refuse to start on a bad com
 ### 8.1 `process_upload`
 
 ```python
-# workers/ingest.py
+# workers/tasks.py
 # Adapters raise one class. The S3 helper maps botocore connection errors and 5xx, and the
-# internal client maps httpx transport errors and 5xx, to engine.errors.Transient.
+# internal client maps httpx transport errors and 5xx, to workers.clients.Transient.
 RETRYABLE = (Transient, SoftTimeLimitExceeded, OSError, MemoryError)   # rev 1.3 — see below
 LIMITS = Limits.from_settings(settings)          # engine/ takes limits as arguments, not settings
 
@@ -522,7 +523,7 @@ def process_archive(api, claim, path: Path, beat, limits: Limits) -> FinalStatus
 ### 8.4 `detect_file_type`
 
 ```python
-# engine/file_signature.py
+# engine/file_checks.py — detection section
 ZIP = b"PK\x03\x04"
 PDF = b"%PDF-"
 WORDML = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
@@ -583,7 +584,7 @@ A bad document inside a good archive is a fact about that document, not evidence
 ### 8.5 `inspect_archive` and `extract_streaming`
 
 ```python
-# engine/archive.py
+# engine/file_checks.py — archive checks and extraction sections
 def inspect_archive(zf: zipfile.ZipFile, limits: Limits) -> list[zipfile.ZipInfo]:
     """Refuse an archive whose central directory describes something unsafe."""
     entries = [e for e in zf.infolist() if not e.is_dir()]
@@ -647,7 +648,7 @@ A daemon thread calls `POST /internal/files/{id}/heartbeat` every `HEARTBEAT_SEC
 ### 8.7 Sweepers
 
 ```python
-# app/services/sweeps.py — runs inside the API, called by workers/sweepers.py
+# app/services/sweeps.py — runs inside the API, called by the sweeper tasks in workers/tasks.py
 def stale_sweep(db) -> dict:
     """Recover files whose worker stopped heartbeating."""
     reset = db.execute(text("""
@@ -684,7 +685,7 @@ def reconcile_sweep(db) -> dict:
 
 **Enqueue failures** (rev 1.3). Each file is enqueued separately after the commit; one failure does not stop the rest. A failed enqueue is logged as `enqueue_failed` and counted in the result. The file is committed as `uploaded` with a fresh `uploaded_at`, so the reconcile sweep re-enqueues it once `RECONCILE_AFTER_SECONDS` have passed.
 
-**Sweep tasks** (rev 1.3). `workers/sweepers.py` calls `POST /internal/sweeps/{stale,reconcile}` and logs the counts. A failed sweep (API down, wrong key, bug) is logged as `sweep_failed` and never retried: the next beat tick is the retry. Each sweep message expires after one interval, so a stuck consumer — or a separate beat service, as in AWS — does not leave a pile of stale sweeps to run at once.
+**Sweep tasks** (rev 1.3). The sweeper tasks (now in `workers/tasks.py`, rev 1.4) call `POST /internal/sweeps/{stale,reconcile}` and logs the counts. A failed sweep (API down, wrong key, bug) is logged as `sweep_failed` and never retried: the next beat tick is the retry. Each sweep message expires after one interval, so a stuck consumer — or a separate beat service, as in AWS — does not leave a pile of stale sweeps to run at once.
 
 Re-enqueueing a file that already has a message in flight is harmless — the second delivery loses the claim and exits (R3.4). The sweepers can therefore be generous.
 

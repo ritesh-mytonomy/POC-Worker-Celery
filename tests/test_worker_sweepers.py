@@ -7,16 +7,16 @@ import httpx
 import pytest
 
 from app.config import get_settings
-from engine.errors import Transient
-from workers.internal_client import InternalAuthError, InternalClient
+from workers.clients import Transient
+from workers.clients import InternalAuthError, InternalClient
 
 
 @pytest.fixture
 def sweepers(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    """workers.sweepers with a valid minimal environment."""
+    """workers.tasks (the sweeper tasks) with a valid minimal environment."""
     monkeypatch.setenv("INTERNAL_API_KEY", "test-key")
     get_settings.cache_clear()
-    import workers.sweepers as module
+    import workers.tasks as module
     yield module
     get_settings.cache_clear()
 

@@ -3,7 +3,7 @@ import io
 import zipfile
 from pathlib import Path
 
-from engine.limits import Limits
+from engine.file_checks import Limits
 
 POC_LIMITS = Limits(max_entries=500, max_uncompressed_bytes=500 * 1024 * 1024, max_compression_ratio=200,
                     allowed_entry_ext=frozenset({"docx"}))
