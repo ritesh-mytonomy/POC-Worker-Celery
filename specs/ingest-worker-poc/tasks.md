@@ -318,7 +318,7 @@ Estimates are rough, for one developer familiar with FastAPI.
 
 ## Phase 14 · Handover  ·  ~1 h
 
-- [ ] **14.1 README**
+- [x] **14.1 README**
   - Prerequisites, `docker compose up`, `run_all.sh`, how to read logs, the seven services and what each does.
 
 - [ ] **14.2 Demo runbook — S5 and S5b**
