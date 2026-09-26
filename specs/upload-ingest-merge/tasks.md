@@ -60,7 +60,7 @@ Plan mode is worth using for **0.2, 3.4, 5.2 and 6.2**.
   - **Done when:** tests show a presigned URL's host is `localhost:4566` while the internal client uses `localstack:4566`, and parts are sorted on completion.
   - _Requirements: U2.3_
 
-- [ ] **2.2 Bucket CORS and lifecycle** — `init-s3.sh`
+- [x] **2.2 Bucket CORS and lifecycle** — `init-s3.sh`
   - CORS for `http://localhost:5173` exposing `ETag`; `AbortIncompleteMultipartUpload` after 1 day.
   - **Done when:** `awslocal s3api get-bucket-cors` shows `ExposeHeaders: ["ETag"]`; the lifecycle shows three rules.
   - _Requirements: U2.4, U4.3_
