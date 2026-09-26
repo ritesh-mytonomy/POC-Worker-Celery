@@ -95,7 +95,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
     - bad parts return 400 and leave the file's status unchanged
   - _Requirements: U3_
 
-- [ ] **3.5 Remove what the merge replaces**
+- [x] **3.5 Remove what the merge replaces**
   - `reextract`, the disk-mode part route, and nothing else.
   - **Done when:** neither route exists, and nothing in `client/` referenced them — checked by search.
   - _Requirements: U4.4_

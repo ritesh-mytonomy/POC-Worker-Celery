@@ -19,6 +19,7 @@ from app.db import get_db_session
 from app.main import app
 from app.repositories import files
 from tests.db_helpers import POC_ORG
+from tests.test_routes_internal_auth import _walk
 from tests.upload_fakes import FakeStorage, Recorder, enqueued, fake_storage  # noqa: F401 — fixtures
 
 MIB = 1024 * 1024
@@ -520,3 +521,28 @@ def test_complete_with_redis_down_still_answers_uploaded(client: TestClient, db_
     response = complete(client, body)
     assert response.status_code == 200 and response.json()["status"] == "uploaded"
     assert status_of(db_session, body) == "uploaded"
+
+
+# ── 3.5 what the merge replaces is not ported (U4.4) ───────────────────────
+
+@pytest.mark.parametrize(("method", "path"), [
+    ("POST", f"/api/uploads/{uuid.uuid4()}/reextract"),                 # the sweepers recover stuck files now
+    ("PUT", "/api/uploads/parts/0123456789abcdef0123456789abcdef/1"),   # disk-mode part upload, gone with disk mode
+])
+def test_replaced_routes_do_not_exist(client: TestClient, method: str, path: str) -> None:
+    """Neither route answers: 404/405 with the detail body (nothing in Anugrah's Client calls them)."""
+    response = client.request(method, path, content=b"x")
+    assert response.status_code in (404, 405) and set(response.json()) == {"detail"}
+
+
+def test_the_upload_api_is_exactly_anugrahs_kept_endpoints() -> None:
+    """The /api/uploads routes are the seven design.md §5.1 keeps — no reextract, no PUT — by route-tree walk
+    and by OpenAPI, so neither can hide one."""
+    walked = {r for r in _walk(list(app.routes)) if r[1].startswith("/api/uploads")}
+    documented = {(m.upper(), path) for path, ops in app.openapi()["paths"].items() if path.startswith("/api/uploads")
+                  for m in ops}
+    assert walked == documented == {
+        ("POST", "/api/uploads/check-duplicate"), ("POST", "/api/uploads/initiate"),
+        ("POST", "/api/uploads/parts/presign"), ("GET", "/api/uploads/{upload_id}/parts"),
+        ("POST", "/api/uploads/complete"), ("POST", "/api/uploads/abort"), ("GET", "/api/uploads"),
+    }
