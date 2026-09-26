@@ -21,6 +21,8 @@ class FakeStorage:
     keys: dict[str, str] = field(default_factory=dict)                   # upload_id -> key
     objects: set[str] = field(default_factory=set)
     calls: list[str] = field(default_factory=list)
+    copies: list[tuple[str, str]] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def create_multipart(self, key: str, content_type: str | None) -> str:
@@ -66,6 +68,19 @@ class FakeStorage:
         self.calls.append("abort_multipart")
         self.uploads.pop(upload_id, None)
 
+    def copy(self, source_key: str, dest_key: str) -> None:
+        """Server-side copy: the destination now exists."""
+        self.calls.append("copy")
+        self.copies.append((source_key, dest_key))
+        self.objects.add(dest_key)
+
+    def delete_many(self, keys: Any) -> None:
+        """Delete every key given (missing ones are fine, as in S3)."""
+        self.calls.append("delete_many")
+        batch = [k for k in keys if k]
+        self.deleted.extend(batch)
+        self.objects.difference_update(batch)
+
     def exists(self, key: str) -> bool:
         """True for a completed object."""
         self.calls.append("exists")
@@ -76,7 +91,8 @@ class FakeStorage:
 def fake_storage(monkeypatch: pytest.MonkeyPatch) -> FakeStorage:
     """Replace every app.storage call the Upload API makes with the in-memory fake."""
     fake = FakeStorage()
-    for name in ("create_multipart", "presign_part", "list_parts", "complete_multipart", "abort_multipart", "exists"):
+    for name in ("create_multipart", "presign_part", "list_parts", "complete_multipart", "abort_multipart", "exists",
+                 "copy", "delete_many"):
         monkeypatch.setattr(storage, name, getattr(fake, name))
     return fake
 

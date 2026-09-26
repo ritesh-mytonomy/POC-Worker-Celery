@@ -8,12 +8,13 @@ from pathlib import PurePosixPath
 from typing import Any, TypeVar
 
 from botocore.exceptions import BotoCoreError, ClientError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import storage, tasks_client
 from app.config import get_settings
 from app.logging import get_logger
-from app.repositories import documents, files
+from app.repositories import audit, candidates, documents, files
 
 log = get_logger(__name__)
 Enqueue = Callable[[str, str], None]
@@ -253,3 +254,99 @@ def complete(db: Session, *, key: str, upload_id: str, parts: list[dict[str, Any
     log.info("upload_completed", file_id=str(row.file_id), batch_id=str(row.batch_id), status=status,
              enqueued=bool(result and result.enqueued))
     return Completed(row.file_id, row.batch_id, row.s3_key, location, status)
+
+
+# ── Commit: add a batch's ready candidates to the library (U8, design.md §5.4) ──
+
+ALREADY_IN_LIBRARY = "Already in the library"
+SAME_FILE_IN_BATCH = "Same file as another in this batch"
+TITLE_IN_LIBRARY = "A document with this title is already in the library"
+
+
+class BatchNotFound(Exception):
+    """No such batch."""
+
+
+@dataclass(frozen=True)
+class CommitResult:
+    """What a commit did: documents added, candidates skipped with reasons, files still in progress."""
+
+    added: list[uuid.UUID]
+    skipped: list[dict[str, Any]]
+    still_in_progress: int
+
+
+def _is_title_clash(exc: IntegrityError) -> bool:
+    """True if the insert broke uq_org_title (the only integrity error a commit turns into a skip)."""
+    return getattr(getattr(exc.orig, "diag", None), "constraint_name", None) == "uq_org_title"
+
+
+def commit(db: Session, batch_id: uuid.UUID) -> CommitResult:
+    """Add whatever is ready in the batch; safe to call again, and again later (design.md §5.4).
+
+    Order: organization lock, then batch lock; only candidates of FINISHED files; each processed one re-checked
+    for duplicates under the lock (content, then title — including documents added earlier in this commit), then
+    inserted in a savepoint and copied staging → processed BEFORE db.commit; candidates deleted; one audit row;
+    the batch committed once nothing is left. Staging objects are deleted only AFTER db.commit — a crash in
+    between leaves them to the bucket's 7-day staging expiry. document_id is uuid5(staged_id), so a re-run after a
+    crash overwrites the same processed/ objects instead of orphaning them.
+    """
+    organization_id = files.batch_organization(db, batch_id)
+    if organization_id is None:
+        db.rollback()
+        raise BatchNotFound(batch_id)
+    documents.lock_organization(db, organization_id)               # 1 — organization first …
+    files.lock_batch(db, batch_id)                                  # 2 — … then the batch, always in this order
+    added: list[uuid.UUID] = []
+    skipped: list[dict[str, Any]] = []
+    doomed: list[str] = []                                          # objects to delete AFTER the commit
+    try:
+        for c in candidates.of_finished_files(db, batch_id):        # 3 — only finished files
+            if c.status == "rejected":
+                candidates.resolve_and_delete(db, c.staged_id, None, None)
+                continue
+            document_id = documents.document_id_for(c.staged_id)
+            key = documents.document_key(organization_id, document_id, c.file_name)
+            reason = None
+            duplicate = documents.find_duplicate(db, organization_id, c.content_hash, c.title_norm)   # 4 — re-check
+            if duplicate is not None:
+                reason = (TITLE_IN_LIBRARY if duplicate.kind == "same_title"
+                          else SAME_FILE_IN_BATCH if duplicate.document_id in added else ALREADY_IN_LIBRARY)
+            else:
+                try:
+                    with db.begin_nested():                         # 5 — a savepoint: a clash undoes only this
+                        documents.insert(db, document_id=document_id, organization_id=organization_id,
+                                         title=c.proposed_title, file_name=c.file_name, file_ext=c.file_ext,
+                                         size_bytes=c.size_bytes, content_hash=c.content_hash, s3_key=key,
+                                         source_file_id=c.source_file_id, uploaded_by=get_settings().POC_USER_ID)
+                except IntegrityError as exc:
+                    if not _is_title_clash(exc):
+                        raise
+                    reason = TITLE_IN_LIBRARY
+            if reason is None:
+                storage.copy(c.s3_key, key)                         # 6 — staging → processed, BEFORE db.commit
+                added.append(document_id)
+                candidates.resolve_and_delete(db, c.staged_id, "create_new", c.proposed_title)
+            else:
+                skipped.append({"staged_id": c.staged_id, "file_name": c.file_name, "reason": reason})
+                doomed.append(key)            # a copy an earlier, crashed run made for this candidate, if any
+                candidates.resolve_and_delete(db, c.staged_id, "discard", c.proposed_title)
+            doomed.append(c.s3_key)
+        still = files.unfinished_count(db, batch_id)
+        audit.write(db, organization_id=organization_id, user_id=get_settings().POC_USER_ID,
+                    action="batch_committed", entity_type="upload_batch", entity_id=str(batch_id),
+                    details={"added": [str(d) for d in added], "still_in_progress": still,
+                             "skipped": [{"staged_id": str(s["staged_id"]), "reason": s["reason"]} for s in skipped]})
+        if still == 0 and not candidates.any_left(db, batch_id):
+            files.mark_batch_committed(db, batch_id)
+        db.commit()                                                 # 7 — the rows are safe from here
+    except BaseException:
+        db.rollback()
+        raise
+    try:
+        storage.delete_many(doomed)                                 # 8 — only after the commit (U8.4)
+    except Exception as exc:                                        # leftovers expire with the staging rule
+        log.warning("commit_cleanup_failed", batch_id=str(batch_id), keys=len(doomed), error=repr(exc))
+    log.info("batch_committed", batch_id=str(batch_id), added=len(added), skipped=len(skipped),
+             still_in_progress=still)
+    return CommitResult(added, skipped, still)

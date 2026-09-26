@@ -336,3 +336,30 @@ def list_uploads(session: Session, organization_id: uuid.UUID) -> list[dict[str,
         WHERE organization_id = :org AND status NOT IN ('staged', 'uploading')
         ORDER BY created_at DESC, file_id"""), {"org": organization_id}).mappings()
     return [dict(r) for r in rows]
+
+
+# ── Commit (upload-ingest-merge U8, design.md §5.4) ─────────────────────────
+
+_UNFINISHED = "status NOT IN ('processed', 'partial', 'rejected', 'error')"
+
+
+def batch_organization(session: Session, batch_id: uuid.UUID) -> uuid.UUID | None:
+    """The batch's organization (a plain read, before any lock), or None if there is no such batch."""
+    return session.execute(text("SELECT organization_id FROM upload_batch WHERE batch_id = :b"),
+                           {"b": batch_id}).scalar_one_or_none()
+
+
+def lock_batch(session: Session, batch_id: uuid.UUID) -> None:
+    """SELECT … FOR UPDATE on the batch row: one commit of a batch at a time. Take the organization lock first."""
+    session.execute(text("SELECT batch_id FROM upload_batch WHERE batch_id = :b FOR UPDATE"), {"b": batch_id})
+
+
+def unfinished_count(session: Session, batch_id: uuid.UUID) -> int:
+    """How many of the batch's files are not yet terminal (staged, uploading, uploaded or processing)."""
+    return session.execute(text(f"SELECT count(*) FROM upload_file WHERE batch_id = :b AND {_UNFINISHED}"),
+                           {"b": batch_id}).scalar_one()
+
+
+def mark_batch_committed(session: Session, batch_id: uuid.UUID) -> None:
+    """The batch is done: every file finished and every candidate committed or discarded (U8.4)."""
+    session.execute(text("UPDATE upload_batch SET status = 'committed' WHERE batch_id = :b"), {"b": batch_id})

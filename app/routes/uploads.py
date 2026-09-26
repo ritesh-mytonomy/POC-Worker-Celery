@@ -1,6 +1,7 @@
 """Public upload routes (design.md §6.1)."""
 import uuid
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -85,3 +86,33 @@ def batch_staged(batch_id: uuid.UUID, db: Session = Depends(get_db_session)) -> 
     if rows is None:
         raise ApiError(404, "not_found", f"batch {batch_id} does not exist")
     return StagedOut(batch_id=batch_id, staged=[StagedDocumentOut(**r) for r in rows])
+
+
+class SkippedOut(BaseModel):
+    """A candidate the commit discarded, and why."""
+
+    staged_id: uuid.UUID
+    file_name: str
+    reason: str
+
+
+class CommitOut(BaseModel):
+    """What a commit did (U8.2): how many were added, which were skipped and why, how many files remain."""
+
+    added: int
+    skipped: list[SkippedOut]
+    still_in_progress: int
+    documents: list[uuid.UUID]
+
+
+@router.post("/batches/{batch_id}/commit", response_model=CommitOut)
+def commit_batch(batch_id: uuid.UUID, db: Session = Depends(get_db_session)) -> CommitOut:
+    """Add the batch's ready candidates to the library — incremental, idempotent (U8); 404 for an unknown batch."""
+    try:
+        result = uploads.commit(db, batch_id)
+    except uploads.BatchNotFound:
+        raise ApiError(404, "not_found", f"batch {batch_id} does not exist") from None
+    except (ClientError, BotoCoreError) as exc:
+        raise ApiError(502, "storage_error", f"S3 failed during the commit; nothing was added: {exc}") from exc
+    return CommitOut(added=len(result.added), skipped=[SkippedOut(**s) for s in result.skipped],
+                     still_in_progress=result.still_in_progress, documents=result.added)

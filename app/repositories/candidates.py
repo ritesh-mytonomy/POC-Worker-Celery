@@ -1,5 +1,6 @@
 """staged_document repository: the fenced candidate upsert (design.md §6.2; R8.3)."""
 import uuid
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -107,3 +108,30 @@ def list_for_batch(session: Session, batch_id: uuid.UUID) -> list[dict[str, obje
         FROM staged_document WHERE batch_id = :b
         ORDER BY source_file_id, entry_index NULLS FIRST, source_entry_name"""), {"b": batch_id}).mappings()
     return [dict(r) for r in rows]
+
+
+# ── Commit (upload-ingest-merge U8, design.md §5.4) ─────────────────────────
+
+def of_finished_files(session: Session, batch_id: uuid.UUID) -> list[Any]:
+    """The candidates a commit may act on: only those of FINISHED files, by file then entry position."""
+    return list(session.execute(text("""
+        SELECT c.staged_id, c.source_file_id, c.file_name, c.file_ext, c.size_bytes, c.content_hash, c.s3_key,
+               c.status, c.proposed_title, c.title_norm
+        FROM staged_document c JOIN upload_file f ON f.file_id = c.source_file_id
+        WHERE c.batch_id = :b AND f.status IN ('processed', 'partial', 'rejected', 'error')
+        ORDER BY f.created_at, f.file_id, c.entry_index NULLS FIRST, c.source_entry_name"""), {"b": batch_id}).all())
+
+
+def resolve_and_delete(session: Session, staged_id: uuid.UUID, resolution: str | None,
+                       confirmed_title: str | None) -> None:
+    """Record the commit's decision on the candidate, then delete it: the library row is the record (D12)."""
+    if resolution is not None:
+        session.execute(text("UPDATE staged_document SET resolution = :r, confirmed_title = :t WHERE staged_id = :id"),
+                        {"r": resolution, "t": confirmed_title, "id": staged_id})
+    session.execute(text("DELETE FROM staged_document WHERE staged_id = :id"), {"id": staged_id})
+
+
+def any_left(session: Session, batch_id: uuid.UUID) -> bool:
+    """True while the batch still has candidates (of unfinished files, or not yet committed)."""
+    return session.execute(text("SELECT 1 FROM staged_document WHERE batch_id = :b LIMIT 1"),
+                           {"b": batch_id}).first() is not None

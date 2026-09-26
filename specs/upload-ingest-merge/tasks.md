@@ -129,7 +129,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** a candidate matching a library document's hash is marked `same_content`, one matching its title `same_title`, with the document's title available to `…/staged`.
   - _Requirements: U6.2_
 
-- [ ] **5.2 Commit — incremental** — *plan mode*
+- [x] **5.2 Commit — incremental** — *plan mode*
   - Per `design.md` §5.4, with the derived `document_id`.
   - **Done when:**
     - a commit adds what's ready and reports `still_in_progress`; a later commit adds the rest
