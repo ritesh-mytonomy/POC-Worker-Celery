@@ -144,7 +144,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
     - the batch becomes `committed` once all files are finished and no candidates remain
   - _Requirements: U6.3, U8_
 
-- [ ] **5.3 Batch review and Library routes**
+- [x] **5.3 Batch review and Library routes**
   - `ready_to_add` and `in_progress` on the batch; duplicate markers on candidates; `GET /library/documents`; download URL.
   - **Done when:** tests cover each. **Checkpoint M2:** the M1 script extended with commit and a Library check passes.
   - _Requirements: U7, U9.1, U9.2_

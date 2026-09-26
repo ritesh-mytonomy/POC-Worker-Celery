@@ -104,10 +104,20 @@ def list_for_batch(session: Session, batch_id: uuid.UUID) -> list[dict[str, obje
     if not batch_exists(session, batch_id):
         return None
     rows = session.execute(text("""
-        SELECT staged_id, source_file_id, source_entry_name, entry_index, file_name, status, reject_reason
-        FROM staged_document WHERE batch_id = :b
-        ORDER BY source_file_id, entry_index NULLS FIRST, source_entry_name"""), {"b": batch_id}).mappings()
+        SELECT c.staged_id, c.source_file_id, c.source_entry_name, c.entry_index, c.file_name, c.status,
+               c.reject_reason, c.content_hash, c.duplicate_of_document_id, c.duplicate_kind, d.title AS duplicate_title
+        FROM staged_document c LEFT JOIN documents d ON d.document_id = c.duplicate_of_document_id
+        WHERE c.batch_id = :b
+        ORDER BY c.source_file_id, c.entry_index NULLS FIRST, c.source_entry_name"""), {"b": batch_id}).mappings()
     return [dict(r) for r in rows]
+
+
+def ready_to_add_count(session: Session, batch_id: uuid.UUID) -> int:
+    """Processed candidates of finished files not marked as duplicates: what Add to library would add (U7.1)."""
+    return session.execute(text("""
+        SELECT count(*) FROM staged_document c JOIN upload_file f ON f.file_id = c.source_file_id
+        WHERE c.batch_id = :b AND c.status = 'processed' AND c.duplicate_of_document_id IS NULL
+          AND f.status IN ('processed', 'partial', 'rejected', 'error')"""), {"b": batch_id}).scalar_one()
 
 
 # ── Commit (upload-ingest-merge U8, design.md §5.4) ─────────────────────────

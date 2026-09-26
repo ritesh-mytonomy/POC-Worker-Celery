@@ -45,14 +45,24 @@ class FileStatusOut(BaseModel):
 
 
 class BatchOut(BaseModel):
-    """A batch and its files."""
+    """A batch and its files, with what Add to library would add now and how many files are still going (U7.1)."""
 
     batch_id: uuid.UUID
     files: list[FileStatusOut]
+    ready_to_add: int
+    in_progress: int
+
+
+class DuplicateOfOut(BaseModel):
+    """The library document a candidate duplicates (U7.2)."""
+
+    document_id: uuid.UUID
+    title: str
+    kind: str
 
 
 class StagedDocumentOut(BaseModel):
-    """One candidate (R14.2); the staging s3_key stays internal."""
+    """One candidate (R14.2, U7.2); the staging s3_key stays internal."""
 
     staged_id: uuid.UUID
     source_file_id: uuid.UUID
@@ -61,6 +71,8 @@ class StagedDocumentOut(BaseModel):
     file_name: str
     status: str
     reject_reason: str | None
+    content_hash: str | None
+    duplicate_of: DuplicateOfOut | None
 
 
 class StagedOut(BaseModel):
@@ -76,7 +88,9 @@ def batch_status(batch_id: uuid.UUID, db: Session = Depends(get_db_session)) -> 
     rows = files.list_batch_files(db, batch_id)
     if rows is None:
         raise ApiError(404, "not_found", f"batch {batch_id} does not exist")
-    return BatchOut(batch_id=batch_id, files=[FileStatusOut(**r) for r in rows])
+    return BatchOut(batch_id=batch_id, files=[FileStatusOut(**r) for r in rows],
+                    ready_to_add=candidates.ready_to_add_count(db, batch_id),
+                    in_progress=files.unfinished_count(db, batch_id))
 
 
 @router.get("/batches/{batch_id}/staged", response_model=StagedOut)
@@ -85,7 +99,16 @@ def batch_staged(batch_id: uuid.UUID, db: Session = Depends(get_db_session)) -> 
     rows = candidates.list_for_batch(db, batch_id)
     if rows is None:
         raise ApiError(404, "not_found", f"batch {batch_id} does not exist")
-    return StagedOut(batch_id=batch_id, staged=[StagedDocumentOut(**r) for r in rows])
+    return StagedOut(batch_id=batch_id, staged=[_staged_out(r) for r in rows])
+
+
+def _staged_out(row: dict[str, object]) -> StagedDocumentOut:
+    """A candidate row, its duplicate marker folded into duplicate_of."""
+    marker = ("duplicate_of_document_id", "duplicate_kind", "duplicate_title")
+    fields = {k: v for k, v in row.items() if k not in marker}
+    duplicate = (DuplicateOfOut(document_id=row["duplicate_of_document_id"], title=row["duplicate_title"],
+                                kind=row["duplicate_kind"]) if row["duplicate_of_document_id"] else None)
+    return StagedDocumentOut(**fields, duplicate_of=duplicate)
 
 
 class SkippedOut(BaseModel):

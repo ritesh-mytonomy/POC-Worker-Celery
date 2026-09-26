@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.logging import configure_logging, get_logger
-from app.routes import internal, upload_api, uploads
+from app.routes import internal, library, upload_api, uploads
 from app.routes.errors import install_error_handlers
 
 configure_logging()
@@ -36,6 +36,7 @@ app.add_middleware(CORSMiddleware, allow_origins=get_settings().CORS_ORIGINS,
 app.include_router(internal.router)
 app.include_router(uploads.router)
 app.include_router(upload_api.router)
+app.include_router(library.router)
 
 
 @app.get("/health")

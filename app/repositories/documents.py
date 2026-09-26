@@ -1,6 +1,7 @@
 """documents repository: the library (upload-ingest-merge design.md §3, U6)."""
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -78,3 +79,26 @@ def insert(session: Session, *, document_id: uuid.UUID, organization_id: uuid.UU
         {"id": document_id, "org": organization_id, "title": title, "title_norm": title_norm(title),
          "file_name": file_name, "file_name_norm": file_name_norm(file_name), "key": s3_key, "ext": file_ext,
          "size": size_bytes, "hash": content_hash, "source": source_file_id, "by": uploaded_by})
+
+
+
+# ── The Library (U9) ────────────────────────────────────────────────────────
+
+_LIBRARY_COLUMNS = "document_id, title, file_name, file_ext, size_bytes, added_at AS created_at, s3_key"
+
+
+def list_library(session: Session, organization_id: uuid.UUID) -> list[dict[str, Any]]:
+    """The organization's documents, newest first; title_norm, then document_id, break ties — a commit gives all
+    its documents the same added_at."""
+    rows = session.execute(text(f"""
+        SELECT {_LIBRARY_COLUMNS} FROM documents WHERE organization_id = :org
+        ORDER BY added_at DESC, title_norm, document_id"""), {"org": organization_id}).mappings()
+    return [dict(r) for r in rows]
+
+
+def get(session: Session, organization_id: uuid.UUID, document_id: uuid.UUID) -> dict[str, Any] | None:
+    """One of the organization's documents, or None."""
+    row = session.execute(text(f"SELECT {_LIBRARY_COLUMNS} FROM documents WHERE organization_id = :org "
+                               "AND document_id = :id"), {"org": organization_id, "id": document_id}).mappings()
+    found = row.one_or_none()
+    return dict(found) if found else None

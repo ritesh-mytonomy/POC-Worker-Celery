@@ -19,7 +19,7 @@ HASH = "ab" * 32                         # a content_hash: 64 lowercase hex (U5.
 FILE_KEYS = {"file_id", "file_name", "status", "entries_total", "entries_done", "attempt_count",
              "detected_type", "status_message"}
 STAGED_KEYS = {"staged_id", "source_file_id", "source_entry_name", "entry_index", "file_name", "status",
-               "reject_reason"}
+               "reject_reason", "content_hash", "duplicate_of"}          # U7.2 added the last two
 
 
 @pytest.fixture
