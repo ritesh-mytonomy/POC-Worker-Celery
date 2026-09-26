@@ -9,6 +9,7 @@ Build strictly from the spec in `specs/ingest-worker-poc/`:
 - Work one task at a time, in the order in `tasks.md`.
 - A task is done only when its **Done when** holds. Run the check and show me the output.
 - Commit only after the full suite has finished and passed.
+- Gate every commit on pytest's own exit code — use `set -o pipefail` whenever output is piped.
 - Tick the task's checkbox in `tasks.md` when done, `git commit` with the task number
   in the message, then `git push`. Then stop and wait for me.
 - Follow `design.md` exactly for SQL, Celery settings, and algorithms. If something
