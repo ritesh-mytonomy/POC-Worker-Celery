@@ -164,7 +164,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** uploading two files with one click puts both in one batch and both reach `processed`; a zip with a bad entry uploads with a warning, and one with no usable entry is blocked; a diff of the upload code against the Upload POC shows the mechanics unchanged and no changes beyond U10.2's list.
   - _Requirements: U10.1, U10.2_
 
-- [ ] **6.3 Processing status and the review panel**
+- [x] **6.3 Processing status and the review panel**
   - `useBatchStatus` polling; the review panel with **Add to library**.
   - **Done when:** rows move through the states in the browser, and **Add to library** adds the ready documents — and can be pressed again when more are ready.
   - _Requirements: U10.3, U10.4_

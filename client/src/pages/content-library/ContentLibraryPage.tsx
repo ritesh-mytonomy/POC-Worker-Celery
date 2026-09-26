@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import PageHeader from '@/components/layout/PageHeader';
 import Button from '@/components/ui/Button';
 import UploadDropzone from '@/components/ui/uploadFile/UploadDropzone';
@@ -16,6 +16,10 @@ import {
   validateUploadFile,
 } from '@/utils/contentValidation';
 import { useUploadConfig } from '@/hooks/useUploadConfig';
+import { useBatchStatus } from '@/hooks/useBatchStatus';
+import ReviewPanel from '@/components/ui/uploadFile/ReviewPanel';
+import { commitBatch } from '@/utils/reviewApi';
+import { mapServerStatus, type StatusLabel } from '@/utils/statusMapping';
 import type { UploadConfig } from '@/utils/uploadConfig';
 import { canStartCloudUpload, isBlockedFromUpload, useUploadQueue } from '@/context/UploadQueueContext';
 import { checkDuplicateUpload } from '@/utils/uploadsApi';
@@ -50,6 +54,37 @@ const ContentLibraryPage = () => {
 
   const items = allItems.filter((item) => item.source === 'content-library');
   const libraryQueue = items.map((item) => ({ id: item.id, name: item.name, size: item.size }));
+
+  // Server statuses for the rows, and the review panels (upload-ingest-merge U10.3, U10.4): a batch is polled
+  // after its first complete, until nothing in it is in progress and none of its uploads is still running.
+  const batchIds = useMemo(
+    () => [...new Set(items.filter((i) => i.cloudUpload?.status === 'success').map((i) => i.cloudUpload!.batchId!))],
+    [items],
+  );
+  const activeBatchIds = useMemo(
+    () => new Set(items.filter((i) => i.cloudUpload?.status === 'uploading').map((i) => i.cloudUpload?.batchId ?? '')),
+    [items],
+  );
+  const { batches, refresh } = useBatchStatus(batchIds, activeBatchIds);
+  const serverStatuses = useMemo(() => {
+    const statuses: Record<string, StatusLabel | null> = {};
+    for (const item of items) {
+      const view = item.cloudUpload?.batchId ? batches[item.cloudUpload.batchId] : undefined;
+      const file = view?.batch.files.find((f) => f.file_id === item.cloudUpload?.fileId);
+      if (!view || !file) continue;
+      const own = view.staged.filter((c) => c.source_file_id === file.file_id);
+      statuses[item.id] = mapServerStatus(file, own.length
+        ? { processed: own.filter((c) => c.status === 'processed').length, total: own.length }
+        : undefined);
+    }
+    return statuses;
+  }, [items, batches]);
+
+  const addToLibrary = async (batchId: string) => {
+    const result = await commitBatch(batchId);
+    await refresh(batchId);
+    return result;
+  };
 
   // Once a completed upload has actually been rendered here, it's
   // "acknowledged" — GlobalUploadWidget stops surfacing it on other pages.
@@ -202,8 +237,16 @@ const ContentLibraryPage = () => {
               items={items}
               onRemove={handleRemove}
               onRetryCloudUpload={retryCloudUpload}
+              serverStatuses={serverStatuses}
             />
           </div>
+        )}
+
+        {[...batchIds].reverse().map(
+          (batchId) =>
+            batches[batchId] && (
+              <ReviewPanel key={batchId} view={batches[batchId]} onCommit={() => addToLibrary(batchId)} />
+            ),
         )}
 
         <div className="flex items-center justify-between pt-md">
