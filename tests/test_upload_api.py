@@ -37,9 +37,9 @@ def initiate(client: TestClient, filename: str = "valid.docx", size: int = 1000,
 
 
 def batch_files(db: Session, batch_id: str) -> list[dict[str, Any]]:
-    """The batch's upload_file rows, oldest first."""
-    return [dict(r) for r in db.execute(text("SELECT * FROM upload_file WHERE batch_id = :b ORDER BY created_at"),
-                                        {"b": batch_id}).mappings()]
+    """The batch's upload_file rows, oldest first, then by name (one test transaction shares created_at)."""
+    return [dict(r) for r in db.execute(text("SELECT * FROM upload_file WHERE batch_id = :b "
+                                             "ORDER BY created_at, file_name"), {"b": batch_id}).mappings()]
 
 
 # ── 3.1 initiate: the row, the key, the parts ──────────────────────────────

@@ -225,6 +225,10 @@ def test_list_uploads(client: TestClient, db_session: Session) -> None:
     first, second = initiated(client), initiated(client)
     set_status(db_session, first["id"], "processed")
     set_status(db_session, second["id"], "uploaded")
+    # One test transaction gives both rows the same created_at; age the first so "newest first" is observable.
+    db_session.execute(text("UPDATE upload_file SET created_at = created_at - interval '1 minute' WHERE file_id = :id"),
+                       {"id": first["id"]})
+    db_session.commit()
     response, fx = send(client, "list_uploads")
     body = assert_success_fields(response, fx)
     assert [item["id"] for item in body] == [second["id"], first["id"]]
