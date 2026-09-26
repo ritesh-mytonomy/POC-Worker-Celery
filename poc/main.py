@@ -10,9 +10,10 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app import tasks_client
+from app import storage, tasks_client
 from app.config import get_settings
 from app.db import get_db_session
+from app.errors import InvalidInput
 from app.logging import get_logger
 from app.repositories import files
 from app.routes.errors import ApiError
@@ -89,12 +90,21 @@ class EnqueueOut(BaseModel):
 
 @router.post("/seed", response_model=SeedOut, status_code=status.HTTP_201_CREATED)
 def seed(body: SeedIn, db: Session = Depends(get_db_session)) -> SeedOut:
-    """Create a batch and `uploading` file rows under POC_ORGANIZATION_ID; 400 for a disallowed extension (A3)."""
+    """Create a batch and `staged` file rows under POC_ORGANIZATION_ID, size_bytes from a HEAD on each object.
+
+    400 for a disallowed extension (A3), a key outside incoming/, or an object that is not in S3; nothing is written.
+    """
     s = get_settings()
     if s.POC_ORGANIZATION_ID is None:
         raise ApiError(503, "poc_not_configured", "POC_ORGANIZATION_ID is not set")
-    batch_id, seeded = files.seed_batch(db, s.POC_ORGANIZATION_ID, [(f.file_name, f.s3_key) for f in body.files],
-                                        s.ALLOWED_TOP_LEVEL_EXT)
+    files.check_seed_files([(f.file_name, f.s3_key) for f in body.files], s.ALLOWED_TOP_LEVEL_EXT)
+    sized = []
+    for f in body.files:
+        size = storage.object_size(f.s3_key)
+        if size is None:
+            raise InvalidInput(f"{f.s3_key!r}: no such object in S3")
+        sized.append((f.file_name, f.s3_key, size))
+    batch_id, seeded = files.seed_batch(db, s.POC_ORGANIZATION_ID, s.POC_USER_ID, sized, s.ALLOWED_TOP_LEVEL_EXT)
     log.info("seeded", batch_id=str(batch_id), file_ids=[str(f.file_id) for f in seeded])
     return SeedOut(batch_id=batch_id, files=[SeededFileOut(**vars(f)) for f in seeded])
 

@@ -15,7 +15,7 @@ from app.errors import InvalidInput
 from app.main import app
 from app.repositories.candidates import upsert
 from app.repositories.files import claim, finish, progress
-from tests.db_helpers import MAX_ATTEMPTS, STALE, full_row, make_file
+from tests.db_helpers import MAX_ATTEMPTS, STALE, full_row, make_file, triggers_off
 
 
 def claimed_archive(db: Session, entries_total: int | None) -> tuple[uuid.UUID, uuid.UUID]:
@@ -148,8 +148,9 @@ def test_rejected_archive_rejects_processed_candidates_and_keeps_specific_reason
     add(db_session, file_id, token, 0)
     add(db_session, file_id, token, 1, rejected=True)
     add(db_session, file_id, token, 2)
-    db_session.execute(text("UPDATE staged_document SET updated_at = now() - interval '60 seconds' "
-                            "WHERE source_file_id = :id"), {"id": file_id})
+    with triggers_off(db_session):
+        db_session.execute(text("UPDATE staged_document SET updated_at = now() - interval '60 seconds' "
+                                "WHERE source_file_id = :id"), {"id": file_id})
     db_session.commit()
     before = candidate_rows(db_session, file_id)
     message = "'e3.docx' does not match its index (Bad CRC-32 for file 'e3.docx')"

@@ -169,9 +169,8 @@ def file_ext_of(file_name: str) -> str:
     return PurePosixPath(file_name).suffix.lower().lstrip(".")
 
 
-def seed_batch(session: Session, organization_id: uuid.UUID, files: list[tuple[str, str]],
-               allowed_ext: list[str]) -> tuple[uuid.UUID, list[SeededFile]]:
-    """POC only: create a batch and `uploading` file rows for (file_name, s3_key) pairs already in incoming/."""
+def check_seed_files(files: list[tuple[str, str]], allowed_ext: list[str]) -> None:
+    """Raise InvalidInput unless every (file_name, s3_key) has an allowed extension and a key under incoming/."""
     if not files:
         raise InvalidInput("files must not be empty")
     for file_name, s3_key in files:
@@ -179,18 +178,25 @@ def seed_batch(session: Session, organization_id: uuid.UUID, files: list[tuple[s
             raise InvalidInput(f"{file_name!r}: extension not allowed (allowed: {', '.join(allowed_ext)})")
         if not s3_key.startswith("ClinSync/incoming/"):
             raise InvalidInput(f"{s3_key!r}: s3_key must be under ClinSync/incoming/")
+
+
+def seed_batch(session: Session, organization_id: uuid.UUID, created_by: int, files: list[tuple[str, str, int]],
+               allowed_ext: list[str]) -> tuple[uuid.UUID, list[SeededFile]]:
+    """POC only: create a batch and `staged` file rows for (file_name, s3_key, size_bytes) of objects in incoming/."""
+    check_seed_files([(file_name, s3_key) for file_name, s3_key, _ in files], allowed_ext)
     batch_id = session.execute(
-        text("INSERT INTO upload_batch (organization_id) VALUES (:org) RETURNING batch_id"), {"org": organization_id}
+        text("INSERT INTO upload_batch (organization_id, created_by) VALUES (:org, :by) RETURNING batch_id"),
+        {"org": organization_id, "by": created_by},
     ).scalar_one()
     seeded = []
-    for file_name, s3_key in files:
+    for file_name, s3_key, size_bytes in files:
         ext = file_ext_of(file_name)
         row = session.execute(text("""
-            INSERT INTO upload_file (batch_id, organization_id, file_name, file_ext, is_archive, s3_key)
-            VALUES (:batch_id, :org, :file_name, :ext, :is_archive, :s3_key)
+            INSERT INTO upload_file (batch_id, organization_id, file_name, file_ext, size_bytes, is_archive, s3_key)
+            VALUES (:batch_id, :org, :file_name, :ext, :size_bytes, :is_archive, :s3_key)
             RETURNING file_id, file_name, is_archive, status"""),
             {"batch_id": batch_id, "org": organization_id, "file_name": file_name, "ext": ext,
-             "is_archive": ext == "zip", "s3_key": s3_key}).mappings().one()
+             "size_bytes": size_bytes, "is_archive": ext == "zip", "s3_key": s3_key}).mappings().one()
         seeded.append(SeededFile(**row))
     session.commit()
     return batch_id, seeded
@@ -207,7 +213,7 @@ def file_exists(session: Session, file_id: uuid.UUID) -> tuple[uuid.UUID, str] |
 _CONFIRM_SQL = text("""
 UPDATE upload_file
 SET status = 'uploaded', uploaded_at = now(), updated_at = now()
-WHERE file_id = :file_id AND status = 'uploading'
+WHERE file_id = :file_id AND status IN ('staged', 'uploading')
 RETURNING organization_id
 """)
 
@@ -222,7 +228,10 @@ class ConfirmResult:
 
 
 def confirm_upload(session: Session, file_id: uuid.UUID) -> ConfirmResult | None:
-    """Move uploading → uploaded in one conditional UPDATE and commit; None if the file does not exist (R2.1, R2.5)."""
+    """Move staged|uploading → uploaded in one conditional UPDATE and commit; None if the file does not exist.
+
+    R2.1 and R2.5; `staged` is the LLD's starting status (upload-ingest-merge U3.2).
+    """
     row = session.execute(_CONFIRM_SQL, {"file_id": file_id}).one_or_none()
     if row is not None:
         session.commit()

@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # POC only — absent in production
     ENTRY_DELAY_SECONDS: float = 0
     POC_ORGANIZATION_ID: UUID4 | None = None
+    POC_USER_ID: int = 0                 # the system actor (OD-19) in created_by, until auth exists
 
     # Internal API
     INTERNAL_API_BASE_URL: str = "http://api:8000"

@@ -65,10 +65,11 @@ def confirm(client: TestClient, file_id: Any) -> Any:
 
 # --- the three branches, plus unknown and malformed ---
 
+@pytest.mark.parametrize("status", ["staged", "uploading"])
 def test_confirm_uploading_sets_uploaded_and_enqueues(client: TestClient, db_session: Session,
-                                                      recorder: Recorder) -> None:
-    """uploading → 200 uploaded, enqueued; uploaded_at set; one publish with file_id and organization_id."""
-    file_id = make_file(db_session, status="uploading")
+                                                      recorder: Recorder, status: str) -> None:
+    """staged or uploading → 200 uploaded, enqueued; uploaded_at set; one publish with file_id and organization_id."""
+    file_id = make_file(db_session, status=status)
     response = confirm(client, file_id)
     assert response.status_code == 200
     assert response.json() == {"file_id": str(file_id), "status": "uploaded", "enqueued": True}

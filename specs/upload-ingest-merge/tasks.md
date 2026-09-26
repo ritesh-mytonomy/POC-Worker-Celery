@@ -45,7 +45,7 @@ Plan mode is worth using for **0.2, 3.4, 5.2 and 6.2**.
 
 ## Phase 1 · Schema
 
-- [ ] **1.1 Adopt the LLD schema** — `schema.sql`, per `design.md` §3
+- [x] **1.1 Adopt the LLD schema** — `schema.sql`, per `design.md` §3
   - Replace `infra/postgres/init.sql` with `schema.sql`. Update the SQLAlchemy models to match, including the renamed and added columns.
   - Adjust the Ingest POC code to the LLD shapes: the initial status is `staged`; confirm accepts `staged` or `uploading`; `/poc/seed` supplies `size_bytes` (from a `HEAD` on the object) and uses the seeded organization; `upload_batch.created_by` is `POC_USER_ID`.
   - **Done when:** `test_models_match_schema` passes against the rebuilt database; every existing test, and every Ingest scenario, still passes.

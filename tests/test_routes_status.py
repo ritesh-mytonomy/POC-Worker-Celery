@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import storage
 from app.db import get_db_session
 from app.main import app
 from app.repositories.candidates import upsert
@@ -117,8 +118,10 @@ def test_batch_without_candidates_returns_empty_list(client: TestClient, db_sess
     assert response.status_code == 200 and response.json() == {"batch_id": str(batch_id), "staged": []}
 
 
-def test_files_created_together_are_ordered_by_name(client: TestClient, db_session: Session) -> None:
+def test_files_created_together_are_ordered_by_name(client: TestClient, db_session: Session,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
     """Files seeded in one transaction share created_at; they come back by file_name, deterministically."""
+    monkeypatch.setattr(storage, "object_size", lambda key: 100)      # seed HEADs each object; none exist here
     response = client.post("/poc/seed", json={"files": [
         {"file_name": n, "s3_key": f"ClinSync/incoming/o/{n}"} for n in ("c.docx", "a.zip", "b.docx")]})
     batch_id = response.json()["batch_id"]

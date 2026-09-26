@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.errors import CandidateIdentityMismatch, ClaimSuperseded
 from app.repositories.candidates import upsert
 from app.repositories.files import _CLAIM_SQL, claim, finish, release
-from tests.db_helpers import MAX_ATTEMPTS, STALE, claimed, set_heartbeat_age
+from tests.db_helpers import MAX_ATTEMPTS, STALE, claimed, set_heartbeat_age, triggers_off
 
 ENTRY = {"source_entry_name": "docs/a.docx", "entry_index": 3, "file_name": "a.docx", "file_ext": "docx"}
 DIRECT = {"source_entry_name": None, "entry_index": None, "file_name": "valid.docx", "file_ext": "docx"}
@@ -28,8 +28,9 @@ def candidates(session: Session, file_id: uuid.UUID) -> list[dict[str, Any]]:
 
 def backdate_candidates(session: Session, file_id: uuid.UUID) -> None:
     """Age the file's candidates' updated_at, so an overwrite stamping now() visibly changes it."""
-    session.execute(text("UPDATE staged_document SET updated_at = now() - interval '60 seconds' "
-                         "WHERE source_file_id = :id"), {"id": file_id})
+    with triggers_off(session):
+        session.execute(text("UPDATE staged_document SET updated_at = now() - interval '60 seconds' "
+                             "WHERE source_file_id = :id"), {"id": file_id})
     session.commit()
 
 

@@ -93,7 +93,7 @@ docker run --rm --network none clinsync-ingest-poc:dev pytest tests/test_engine*
 | `worker-scan` | Celery worker on queue `clinsync.scan` (1 process), running a stub scan task. Exists to prove queue isolation: a saturated ingest pool cannot delay it. Starts through `poc.worker` (the production Celery app plus the stub). |
 | `worker-maint` | Celery worker on `clinsync.maintenance` with **beat embedded** (`-B`). Every 15 s beat publishes the stale sweep (reset files whose heartbeat went silent) and the reconcile sweep (re-enqueue confirmed files nobody claimed — lost messages). The API does the sweeping; this worker only calls it. |
 | `redis` | The broker. Append-only file on (like ElastiCache), data on the named volume `redis-data`. Holds messages only — all state is in PostgreSQL. |
-| `postgres` | PostgreSQL 15: `upload_batch`, `upload_file` (the state machine, claim token, heartbeat, progress), `staged_document` (candidates). Schema in `infra/postgres/init.sql`. |
+| `postgres` | PostgreSQL 15 with the LLD's tables: `organizations` (one POC row), `upload_batch`, `upload_file` (the state machine, claim token, heartbeat, progress), `staged_document` (candidates), `documents` (the library), `audit_log`. Schema in `infra/postgres/init.sql`, a copy of `specs/upload-ingest-merge/schema.sql`. |
 | `localstack` | S3 emulator on `:4566`, bucket `clinsync-poc` with lifecycle rules on `ClinSync/incoming/` (1 day) and `ClinSync/staging/` (7 days). |
 
 ## Reading the logs

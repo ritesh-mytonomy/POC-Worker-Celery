@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.repositories.files import release
 from app.services.sweeps import reconcile_sweep, stale_sweep
 from tests.db_helpers import (
-    MAX_ATTEMPTS, STALE, claimed, full_row, make_file, set_heartbeat_age, set_uploaded_age,
+    MAX_ATTEMPTS, STALE, claimed, full_row, make_file, set_heartbeat_age, set_uploaded_age, triggers_off,
 )
 
 AGE = 30                                 # RECONCILE_AFTER_SECONDS, POC value
@@ -57,8 +57,9 @@ def processing_file(db: Session, *, attempts: int, heartbeat_age: int) -> uuid.U
 
 def backdate_updated_at(db: Session, file_id: uuid.UUID) -> None:
     """Age updated_at, so a sweep stamping now() visibly changes it."""
-    db.execute(text("UPDATE upload_file SET updated_at = now() - interval '60 seconds' WHERE file_id = :id"),
-               {"id": file_id})
+    with triggers_off(db):
+        db.execute(text("UPDATE upload_file SET updated_at = now() - interval '60 seconds' WHERE file_id = :id"),
+                   {"id": file_id})
     db.commit()
 
 
@@ -139,6 +140,7 @@ def test_reconcile_requeues_below_max_and_errors_at_max(db_session: Session) -> 
     error_before = full_row(db_session, to_error)
     untouched = [
         uploaded_file(db_session, attempts=0, uploaded_age=0),                        # too recent
+        uploaded_file(db_session, attempts=0, uploaded_age=AGE + 5, status="staged"),
         uploaded_file(db_session, attempts=0, uploaded_age=AGE + 5, status="uploading"),
         uploaded_file(db_session, attempts=1, uploaded_age=AGE + 5, status="processing"),
         uploaded_file(db_session, attempts=MAX_ATTEMPTS, uploaded_age=AGE + 5, status="processed"),

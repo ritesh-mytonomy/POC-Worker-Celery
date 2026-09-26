@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 API=http://127.0.0.1:8000
 BATCH=""
+KEY="ClinSync/incoming/redis-down-$$/valid_a.docx"   # seed HEADs the object, so it must exist
 
 cleanup() {
   docker compose start redis >/dev/null
@@ -13,12 +14,14 @@ cleanup() {
     docker compose exec -T postgres psql -U "${POSTGRES_USER:-clinsync}" -d "${POSTGRES_DB:-clinsync}" -qtAc \
       "DELETE FROM upload_batch WHERE batch_id = '$BATCH'" >/dev/null
   fi
+  docker compose exec -T localstack awslocal s3 rm "s3://clinsync-poc/$KEY" >/dev/null || true
   echo "cleanup: redis $(docker compose ps --format '{{.Status}}' redis), demo batch removed"
 }
 trap cleanup EXIT
 
+printf 'placeholder: never processed' | docker compose exec -T localstack awslocal s3 cp - "s3://clinsync-poc/$KEY" >/dev/null
 SEED=$(curl -sf -X POST "$API/poc/seed" -H 'Content-Type: application/json' \
-  -d '{"files":[{"file_name":"valid_a.docx","s3_key":"ClinSync/incoming/redis-down/valid_a.docx"}]}')
+  -d "{\"files\":[{\"file_name\":\"valid_a.docx\",\"s3_key\":\"$KEY\"}]}")
 BATCH=$(echo "$SEED" | jq -r .batch_id)
 FILE=$(echo "$SEED" | jq -r '.files[0].file_id')
 

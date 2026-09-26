@@ -31,8 +31,9 @@ def nfr1(s: lib.Scenario, run_id: str) -> None:
     try:
         p95s = []
         for r in range(ROUNDS):
-            batch_id, ids = lib.seed([(f"n1_{i}.docx", f"ClinSync/incoming/{run_id}/n1_{r}_{i}.docx")
-                                      for i in range(50)])
+            key = lib.incoming_key(run_id, f"n1_{r}.docx")
+            lib.upload("valid.docx", key)                    # seed HEADs each object; the 50 rows share one
+            batch_id, ids = lib.seed([(f"n1_{i}.docx", key) for i in range(50)])
             times = []
             for file_id in ids:
                 t0 = time.perf_counter()
@@ -44,8 +45,8 @@ def nfr1(s: lib.Scenario, run_id: str) -> None:
             print(f"         round {r + 1}: p50 {statistics.median(times):.1f} ms · p95 {p95:.1f} ms · "
                   f"max {max(times):.1f} ms")
             s.check(f"NFR-1 round {r + 1} p95 < 200 ms", p95 < 200, True)
-            lib.redis_cli("DEL", "clinsync.ingest")          # drop the queued messages; these files have no objects
-            lib.cleanup(s, batch_id, [], check_terminal=False)
+            lib.redis_cli("DEL", "clinsync.ingest")          # drop the queued messages; these files are never processed
+            lib.cleanup(s, batch_id, [key], check_terminal=False)
         print(f"         spread of p95 across rounds: {min(p95s):.1f}–{max(p95s):.1f} ms")
     finally:
         lib.restore_worker_ingest()

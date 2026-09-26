@@ -17,6 +17,7 @@ from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
 from app.db import get_engine
+from tests.db_helpers import NOT_CONFIRMED, POC_ORG, POC_USER, SIZE
 
 
 def connect_or_skip() -> Connection:
@@ -65,17 +66,17 @@ def _committed_file(status: str) -> Iterator[uuid.UUID]:
     engine = get_engine()
     with engine.begin() as conn:
         batch_id = conn.execute(
-            text("INSERT INTO upload_batch (organization_id) VALUES (:org) RETURNING batch_id"),
-            {"org": uuid.uuid4()},
+            text("INSERT INTO upload_batch (organization_id, created_by) VALUES (:org, :by) RETURNING batch_id"),
+            {"org": POC_ORG, "by": POC_USER},
         ).scalar_one()
         file_id = conn.execute(
-            text("""INSERT INTO upload_file (batch_id, organization_id, file_name, file_ext, is_archive,
+            text("""INSERT INTO upload_file (batch_id, organization_id, file_name, file_ext, size_bytes, is_archive,
                                              s3_key, status, uploaded_at)
-                    SELECT batch_id, organization_id, 'race.docx', 'docx', false,
+                    SELECT batch_id, organization_id, 'race.docx', 'docx', :size, false,
                            'ClinSync/incoming/race.docx', :status,
                            CASE WHEN :confirmed THEN now() END
                     FROM upload_batch WHERE batch_id = :b RETURNING file_id"""),
-            {"b": batch_id, "status": status, "confirmed": status != "uploading"},
+            {"b": batch_id, "size": SIZE, "status": status, "confirmed": status not in NOT_CONFIRMED},
         ).scalar_one()
     try:
         yield file_id
@@ -93,8 +94,15 @@ def committed_file() -> Iterator[uuid.UUID]:
 
 @pytest.fixture
 def committed_uploading_file() -> Iterator[uuid.UUID]:
-    """A committed `uploading` file (seeded, not yet confirmed)."""
+    """A committed `uploading` file (parts being sent, not yet confirmed)."""
     with _committed_file("uploading") as file_id:
+        yield file_id
+
+
+@pytest.fixture
+def committed_staged_file() -> Iterator[uuid.UUID]:
+    """A committed `staged` file (registered, no part sent yet — the LLD's starting status)."""
+    with _committed_file("staged") as file_id:
         yield file_id
 
 

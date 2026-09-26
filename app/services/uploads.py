@@ -22,7 +22,7 @@ class Confirmed:
 
 
 def confirm(db: Session, file_id: uuid.UUID, enqueue: Enqueue | None = None) -> Confirmed | None:
-    """uploading → uploaded, commit, then enqueue once; later statuses are returned unchanged. None if unknown."""
+    """staged|uploading → uploaded, commit, then enqueue once; later statuses come back unchanged. None if unknown."""
     result = files.confirm_upload(db, file_id)   # commits before returning
     if result is None:
         return None

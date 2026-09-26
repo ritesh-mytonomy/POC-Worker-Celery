@@ -78,7 +78,7 @@ def test_finish_sets_terminal_status_and_clears_token(db_session: Session, statu
     assert after["status"] == status and after["status_message"] == "done" and after["claim_token"] is None
 
 
-@pytest.mark.parametrize("status", ["uploaded", "processing", "uploading", "bogus"])
+@pytest.mark.parametrize("status", ["uploaded", "processing", "uploading", "staged", "bogus"])
 def test_finish_refuses_non_terminal_status(db_session: Session, status: str) -> None:
     """finish with a non-terminal status raises ValueError and writes nothing."""
     file_id, token = claimed(db_session)

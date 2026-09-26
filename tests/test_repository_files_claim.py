@@ -53,7 +53,7 @@ def test_claim_stale_processing_takes_over_with_new_token(db_session: Session) -
     assert db_row(db_session, file_id).claim_token == second.claim_token
 
 
-@pytest.mark.parametrize("status", ["processed", "partial", "rejected", "error", "uploading"])
+@pytest.mark.parametrize("status", ["processed", "partial", "rejected", "error", "uploading", "staged"])
 def test_claim_non_claimable_status_returns_none(db_session: Session, status: str) -> None:
     """Terminal files (and not-yet-confirmed ones) are never claimed."""
     file_id = make_file(db_session, status=status)
