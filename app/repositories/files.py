@@ -293,3 +293,29 @@ def create_upload(session: Session, *, file_id: uuid.UUID, batch_id: uuid.UUID, 
          "size_bytes": size_bytes, "content_type": content_type, "s3_key": s3_key, "upload_id": upload_id,
          "is_archive": ext == "zip"})
 
+
+@dataclass(frozen=True)
+class UploadRow:
+    """The upload_file fields the Upload API works with."""
+
+    file_id: uuid.UUID
+    batch_id: uuid.UUID
+    s3_key: str
+    upload_id: str
+    status: str
+
+
+def find_by_upload(session: Session, upload_id: str, s3_key: str, *, lock: bool = False) -> UploadRow | None:
+    """The file whose multipart upload id AND key both match, or None (U2.2); FOR UPDATE when lock is set."""
+    row = session.execute(text(f"""
+        SELECT file_id, batch_id, s3_key, upload_id, status FROM upload_file
+        WHERE upload_id = :upload_id AND s3_key = :key {"FOR UPDATE" if lock else ""}"""),
+        {"upload_id": upload_id, "key": s3_key}).mappings().one_or_none()
+    return UploadRow(**row) if row else None
+
+
+def mark_uploading(session: Session, file_id: uuid.UUID) -> None:
+    """staged → uploading on the first presign (U1.3); any other status is left alone. Commits."""
+    session.execute(text("UPDATE upload_file SET status = 'uploading', updated_at = now() "
+                         "WHERE file_id = :id AND status = 'staged'"), {"id": file_id})
+    session.commit()

@@ -82,3 +82,47 @@ def initiate(body: InitiateRequest, db: Session = Depends(get_db_session)) -> In
     return InitiateResponse(id=str(started.file_id), fileId=str(started.file_id), uploadId=started.upload_id,
                             key=started.key, partSize=started.part_size, totalParts=started.total_parts,
                             batchId=str(started.batch_id))
+
+
+# ── parts/presign and parts ─────────────────────────────────────────────────
+
+class PresignRequest(BaseModel):
+    """Anugrah's body: which parts of which upload."""
+
+    key: str
+    uploadId: str
+    partNumbers: list[int]
+
+
+class PresignResponse(BaseModel):
+    """One presigned PUT URL per part number."""
+
+    urls: dict[int, str]
+
+
+@router.post("/parts/presign", response_model=PresignResponse)
+def presign(body: PresignRequest, db: Session = Depends(get_db_session)) -> PresignResponse:
+    """Presign part uploads for the browser; 404 for an unknown key + uploadId pair, 409 past uploading (U2)."""
+    return PresignResponse(urls=_answer(lambda: uploads.presign(db, key=body.key, upload_id=body.uploadId,
+                                                                part_numbers=body.partNumbers)))
+
+
+class UploadedPart(BaseModel):
+    """A part already in S3."""
+
+    partNumber: int
+    etag: str
+    size: int
+
+
+class ListPartsResponse(BaseModel):
+    """The parts already uploaded, in order."""
+
+    parts: list[UploadedPart]
+
+
+@router.get("/{upload_id}/parts", response_model=ListPartsResponse)
+def list_parts(upload_id: str, key: str, db: Session = Depends(get_db_session)) -> ListPartsResponse:
+    """Parts already in S3, for resuming after a refresh (U2.1)."""
+    return ListPartsResponse(parts=[UploadedPart(**p) for p in
+                                    _answer(lambda: uploads.parts(db, key=key, upload_id=upload_id))])

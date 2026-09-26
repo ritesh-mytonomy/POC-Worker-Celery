@@ -76,7 +76,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** contract tests pass; parallel `initiate` calls with the same new `batchId` land in one batch; a call without one creates a new batch; a `batchId` of a committed or abandoned batch gets 409; errors on `/api/uploads/*` are `{"detail"}` while a `/api/v1/*` error is still the envelope.
   - _Requirements: U1, U6.1, U12_
 
-- [ ] **3.2 `parts/presign` and `parts`**
+- [x] **3.2 `parts/presign` and `parts`**
   - Row check on the `key` + `uploadId` pair.
   - **Done when:** contract tests pass; a pair that doesn't match a row gets 404; a file not `staged` or `uploading` gets 409; the first presign moves `staged` to `uploading`.
   - _Requirements: U2_

@@ -118,10 +118,13 @@ def test_complete_multipart_sorts_parts_by_number(stub: Stubber) -> None:
     ("MalformedXML", storage.InvalidParts),
 ])
 def test_complete_multipart_maps_errors(stub: Stubber, code: str, error: type[Exception]) -> None:
-    """§5.3 needs two distinct outcomes: the upload is gone, or S3 refused the part list."""
-    stub.add_client_error("complete_multipart_upload", service_error_code=code, http_status_code=400)
-    with pytest.raises(error):
+    """§5.3 needs two distinct outcomes: the upload is gone, or S3 refused the part list. Each keeps S3's code
+    and message, which the Upload API shows as "S3 error (<code>): <message>"."""
+    stub.add_client_error("complete_multipart_upload", service_error_code=code, service_message="S3 says no",
+                          http_status_code=400)
+    with pytest.raises(error) as raised:
         storage.complete_multipart(KEY, UPLOAD_ID, [{"partNumber": 1, "etag": '"e"'}])
+    assert (raised.value.code, str(raised.value)) == (code, "S3 says no")
 
 
 def test_complete_multipart_other_errors_propagate(stub: Stubber) -> None:

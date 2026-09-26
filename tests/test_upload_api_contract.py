@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -135,3 +136,40 @@ def test_initiate_errors_are_word_for_word(client: TestClient, name: str) -> Non
     """413 over 5 GiB and FastAPI's 422 for fileSize 0: the fixture's status and body exactly."""
     response, fx = send(client, name)
     assert_same_error(response, fx)
+
+
+# ── 3.2 parts/presign and parts ────────────────────────────────────────────
+
+def initiated(client: TestClient) -> dict[str, Any]:
+    """Our own initiate, from the fixture's request: the server-generated values later requests carry."""
+    response, _ = send(client, "initiate")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_parts_presign(client: TestClient) -> None:
+    """The fixture body, with our key and uploadId → a URL for each part number asked for."""
+    ids = initiated(client)
+    response, fx = send(client, "parts_presign", key=ids["key"], uploadId=ids["uploadId"])
+    body = assert_success_fields(response, fx)
+    assert set(body["urls"]) == set(fx["response"]["body"]["urls"]) == {"1", "2"}
+
+
+def test_parts_presign__400_empty(client: TestClient) -> None:
+    """partNumbers [] → 400 with exactly the fixture's detail (checked before the row)."""
+    ids = initiated(client)
+    response, fx = send(client, "parts_presign__400_empty", key=ids["key"], uploadId=ids["uploadId"])
+    assert_same_error(response, fx)
+
+
+def test_list_parts(client: TestClient, fake_storage: FakeStorage) -> None:  # noqa: F811
+    """After two parts are PUT → {parts: [{partNumber, etag, size}]} as the fixture, in part order."""
+    ids = initiated(client)
+    for n in (2, 1):
+        fake_storage.put_part(ids["uploadId"], n)
+    path = f"/api/uploads/{ids['uploadId']}/parts?key={quote(ids['key'], safe='')}"
+    response, fx = send(client, "list_parts", path=path)
+    body = assert_success_fields(response, fx)
+    for item in body["parts"]:
+        assert set(fx["response"]["body"]["parts"][0]) == set(item)
+    assert [p["partNumber"] for p in body["parts"]] == [1, 2]

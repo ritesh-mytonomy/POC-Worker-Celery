@@ -222,3 +222,86 @@ def test_check_duplicate_ignores_uploads_not_in_the_library(client: TestClient) 
     response = client.post("/api/uploads/check-duplicate", json={"filename": "report.docx", "fileSize": 5000})
     assert response.json() == {"duplicate": False, "message": None}
 
+
+
+# ── 3.2 parts/presign and parts (U2) ───────────────────────────────────────
+
+REAL_PRESIGN = storage.presign_part                       # captured before the fake_storage fixture patches it
+
+
+def presign(client: TestClient, body: dict[str, Any], parts: list[int]) -> Any:
+    """POST parts/presign for an initiate response's key and uploadId."""
+    return client.post("/api/uploads/parts/presign",
+                       json={"key": body["key"], "uploadId": body["uploadId"], "partNumbers": parts})
+
+
+def status_of(db: Session, body: dict[str, Any]) -> str:
+    """The file's status now."""
+    return db.execute(text("SELECT status FROM upload_file WHERE file_id = :id"), {"id": body["id"]}).scalar_one()
+
+
+def test_first_presign_moves_staged_to_uploading(client: TestClient, db_session: Session) -> None:
+    """staged → uploading on the first presign (U1.3); a second presign keeps it uploading."""
+    body = initiate(client, size=20 * MIB).json()
+    assert status_of(db_session, body) == "staged"
+    assert presign(client, body, [1, 2]).status_code == 200
+    assert status_of(db_session, body) == "uploading"
+    assert presign(client, body, [3]).status_code == 200 and status_of(db_session, body) == "uploading"
+
+
+@pytest.mark.parametrize("wrong", ["key", "uploadId"])
+def test_presign_refuses_a_pair_matching_no_row(client: TestClient, wrong: str) -> None:
+    """Both halves must match one row (U2.2): a right key with another uploadId, or the reverse, is 404."""
+    body = initiate(client).json()
+    response = client.post("/api/uploads/parts/presign",
+                           json={"key": body["key"], "uploadId": body["uploadId"], wrong: "other",
+                                 "partNumbers": [1]})
+    assert response.status_code == 404 and response.json() == {"detail": "Upload not found."}
+
+
+@pytest.mark.parametrize("status", ["uploaded", "processing", "processed", "error"])
+def test_presign_refuses_a_file_past_uploading(client: TestClient, db_session: Session, status: str) -> None:
+    """A file no longer awaiting parts → 409 with Anugrah's text; its status is unchanged."""
+    body = initiate(client).json()
+    db_session.execute(text("UPDATE upload_file SET status = :s WHERE file_id = :id"), {"s": status, "id": body["id"]})
+    db_session.commit()
+    response = presign(client, body, [1])
+    assert response.status_code == 409 and response.json() == {"detail": "Upload is not awaiting completion."}
+    assert status_of(db_session, body) == status
+
+
+def test_presigned_urls_name_the_public_host(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the real presign (no network needed), every URL is on S3_PUBLIC_ENDPOINT_URL, not the internal host."""
+    monkeypatch.setenv("S3_PUBLIC_ENDPOINT_URL", "http://localhost:4566")
+    monkeypatch.setenv("AWS_ENDPOINT_URL", "http://localstack:4566")
+    for cached in (get_settings, storage.public_client, storage.internal_client):
+        cached.cache_clear()
+    monkeypatch.setattr(storage, "presign_part", REAL_PRESIGN)
+    try:
+        body = initiate(client, size=20 * MIB).json()
+        urls = presign(client, body, [1, 2, 3]).json()["urls"]
+    finally:
+        for cached in (get_settings, storage.public_client, storage.internal_client):
+            cached.cache_clear()
+    assert sorted(urls) == ["1", "2", "3"]
+    assert all(u.startswith(f"http://localhost:4566/{get_settings().S3_BUCKET}/{body['key']}?") for u in urls.values())
+
+
+def test_list_parts_checks_the_pair_and_status(client: TestClient, db_session: Session) -> None:
+    """GET …/parts: 404 for an unknown pair, 409 for a file past uploading — the same row check as presign."""
+    body = initiate(client).json()
+    unknown = client.get("/api/uploads/other/parts", params={"key": body["key"]})
+    assert unknown.status_code == 404 and unknown.json() == {"detail": "Upload not found."}
+    db_session.execute(text("UPDATE upload_file SET status = 'uploaded' WHERE file_id = :id"), {"id": body["id"]})
+    db_session.commit()
+    past = client.get(f"/api/uploads/{body['uploadId']}/parts", params={"key": body["key"]})
+    assert past.status_code == 409 and past.json() == {"detail": "Upload is not awaiting completion."}
+
+
+def test_list_parts_of_an_upload_s3_no_longer_has_is_404(client: TestClient, fake_storage: FakeStorage  # noqa: F811
+                                                        ) -> None:
+    """S3 lost the multipart upload (lifecycle expiry) → 404 "S3 error (NoSuchUpload): …", as Anugrah's API."""
+    body = initiate(client).json()
+    fake_storage.uploads.pop(body["uploadId"])
+    response = client.get(f"/api/uploads/{body['uploadId']}/parts", params={"key": body["key"]})
+    assert response.status_code == 404 and response.json()["detail"].startswith("S3 error (NoSuchUpload): ")

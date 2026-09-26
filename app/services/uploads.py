@@ -143,3 +143,34 @@ def initiate(db: Session, *, filename: str, file_size: int, content_type: str | 
     return Initiated(file_id=file_id, batch_id=batch_id, upload_id=upload_id, key=key,
                      part_size=s.UPLOAD_PART_SIZE_BYTES,
                      total_parts=max(1, math.ceil(file_size / s.UPLOAD_PART_SIZE_BYTES)))
+
+
+def _awaiting(db: Session, upload_id: str, key: str, *, lock: bool = False) -> files.UploadRow:
+    """The file for this key + uploadId pair, still staged or uploading: else 404 or 409 (U2.2)."""
+    row = files.find_by_upload(db, upload_id, key, lock=lock)
+    if row is None:
+        db.rollback()
+        raise UploadRefused(404, "Upload not found.")
+    if row.status not in ("staged", "uploading"):
+        db.rollback()
+        raise UploadRefused(409, "Upload is not awaiting completion.")
+    return row
+
+
+def presign(db: Session, *, key: str, upload_id: str, part_numbers: list[int]) -> dict[int, str]:
+    """Presigned PUT URLs on the public host, one per part (U2); the first presign moves staged → uploading."""
+    if not part_numbers:
+        raise UploadRefused(400, "partNumbers must not be empty.")
+    row = _awaiting(db, upload_id, key)
+    files.mark_uploading(db, row.file_id)
+    return {n: _s3(storage.presign_part, row.s3_key, row.upload_id, n) for n in part_numbers}
+
+
+def parts(db: Session, *, key: str, upload_id: str) -> list[dict[str, Any]]:
+    """Parts already in S3, for resuming (U2.1); same pair check as presign."""
+    row = _awaiting(db, upload_id, key)
+    db.rollback()                        # read-only; end the transaction before the S3 call
+    try:
+        return _s3(storage.list_parts, row.s3_key, row.upload_id)
+    except storage.NoSuchUpload as exc:
+        raise UploadRefused(404, f"S3 error ({exc.code or 'NoSuchUpload'}): {exc}") from exc

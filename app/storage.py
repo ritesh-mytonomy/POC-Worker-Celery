@@ -22,11 +22,20 @@ INVALID_PARTS = {"InvalidPart", "InvalidPartOrder", "EntityTooSmall", "Malformed
 DELETE_BATCH = 1000                      # S3's limit per DeleteObjects call
 
 
-class NoSuchUpload(Exception):
+class StorageRefused(Exception):
+    """An S3 refusal the API answers itself; str() is S3's message and `code` its error code."""
+
+    def __init__(self, message: str, code: str = "") -> None:
+        """Keep S3's message and code (Anugrah's API shows them as "S3 error (<code>): <message>")."""
+        super().__init__(message)
+        self.code = code
+
+
+class NoSuchUpload(StorageRefused):
     """The multipart upload no longer exists: aborted, completed, or expired (design.md §5.3)."""
 
 
-class InvalidParts(Exception):
+class InvalidParts(StorageRefused):
     """S3 refused the part list at completion: a part is missing, its ETag is wrong, or it is too small (§5.3)."""
 
 
@@ -66,11 +75,11 @@ def _code(exc: ClientError) -> str:
 
 def _raise_mapped(exc: ClientError) -> NoReturn:
     """Re-raise as NoSuchUpload or InvalidParts when S3's code says so; otherwise re-raise unchanged."""
-    code = _code(exc)
+    code, message = _code(exc), str(exc.response.get("Error", {}).get("Message") or exc)
     if code == "NoSuchUpload":
-        raise NoSuchUpload(str(exc)) from exc
+        raise NoSuchUpload(message, code) from exc
     if code in INVALID_PARTS:
-        raise InvalidParts(str(exc)) from exc
+        raise InvalidParts(message, code) from exc
     raise exc
 
 
