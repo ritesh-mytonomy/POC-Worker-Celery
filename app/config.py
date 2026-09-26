@@ -7,6 +7,7 @@ from pydantic import UUID4, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 CsvList = Annotated[list[str], NoDecode]
+S3_MIN_PART_BYTES = 5 * 1024 * 1024       # S3's minimum for every part but the last
 
 
 class Settings(BaseSettings):
@@ -49,6 +50,8 @@ class Settings(BaseSettings):
     S3_PUBLIC_ENDPOINT_URL: str | None = None
     S3_BUCKET: str = "clinsync-poc"
     PRESIGN_EXPIRES_SECONDS: int = 3600
+    UPLOAD_PART_SIZE_BYTES: int = 8 * 1024 * 1024        # Anugrah's default; at least S3_MIN_PART_BYTES
+    MAX_UPLOAD_BYTES: int = 5 * 1024 * 1024 * 1024       # 5 GiB, Anugrah's limit
     DOWNLOAD_URL_EXPIRES_SECONDS: int = 300
     CORS_ORIGINS: CsvList = ["http://localhost:5173"]
     REDIS_URL: str = "redis://redis:6379/0"
@@ -107,6 +110,9 @@ class Settings(BaseSettings):
                 f"STALE_AFTER_SECONDS ({self.STALE_AFTER_SECONDS}) must be >= "
                 f"3 x HEARTBEAT_SECONDS ({3 * self.HEARTBEAT_SECONDS})"
             )
+        if self.UPLOAD_PART_SIZE_BYTES < S3_MIN_PART_BYTES:
+            errors.append(f"UPLOAD_PART_SIZE_BYTES ({self.UPLOAD_PART_SIZE_BYTES}) must be >= 5 MiB "
+                          f"({S3_MIN_PART_BYTES})")
         if not self.INTERNAL_API_KEY.strip():
             errors.append("INTERNAL_API_KEY must be non-empty")
         if errors:

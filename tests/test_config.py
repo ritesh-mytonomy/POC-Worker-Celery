@@ -28,6 +28,7 @@ def test_poc_defaults_are_valid() -> None:
         ({"TASK_SOFT_TIME_LIMIT": 200}, "TASK_SOFT_TIME_LIMIT"),
         ({"INTERNAL_API_KEY": ""}, "INTERNAL_API_KEY"),
         ({"INTERNAL_API_KEY": "   "}, "INTERNAL_API_KEY"),
+        ({"UPLOAD_PART_SIZE_BYTES": 5 * 1024 * 1024 - 1}, "UPLOAD_PART_SIZE_BYTES"),   # below S3's minimum part
         ({"INGEST_CONCURRENCY": 0}, "INGEST_CONCURRENCY"),
         ({"MAX_ATTEMPTS": 0}, "MAX_ATTEMPTS"),
     ],
@@ -73,3 +74,16 @@ def test_csv_lists_parse_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ALLOWED_TOP_LEVEL_EXT", "docx, .ZIP")
     monkeypatch.setenv("INTERNAL_API_KEY", "k")
     assert Settings(_env_file=None).ALLOWED_TOP_LEVEL_EXT == ["docx", "zip"]
+
+
+def test_cors_origins_parse_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CORS_ORIGINS is a comma-separated list of origins, kept as written (not lowercased like extensions)."""
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:5173, http://127.0.0.1:5173")
+    assert make().CORS_ORIGINS == ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
+def test_upload_limits_default_to_anugrahs_values() -> None:
+    """8 MiB parts, 5 GiB per upload (design.md §8); 5 MiB parts are still valid."""
+    settings = make()
+    assert (settings.UPLOAD_PART_SIZE_BYTES, settings.MAX_UPLOAD_BYTES) == (8 * 1024 * 1024, 5 * 1024 ** 3)
+    make(UPLOAD_PART_SIZE_BYTES=5 * 1024 * 1024).validate()

@@ -256,3 +256,40 @@ def list_batch_files(session: Session, batch_id: uuid.UUID) -> list[dict[str, ob
         SELECT file_id, file_name, status, entries_total, entries_done, attempt_count, detected_type, status_message
         FROM upload_file WHERE batch_id = :b ORDER BY created_at, file_name, file_id"""), {"b": batch_id}).mappings()
     return [dict(r) for r in rows]
+
+
+# ── Anugrah's Upload API (upload-ingest-merge U1–U4) ────────────────────────
+
+_ENSURE_BATCH_SQL = text("""
+INSERT INTO upload_batch (batch_id, organization_id, created_by)
+VALUES (:batch_id, :org, :created_by)
+ON CONFLICT (batch_id) DO NOTHING
+""")
+
+
+def ensure_batch(session: Session, batch_id: uuid.UUID, organization_id: uuid.UUID, created_by: int) -> str:
+    """Create the batch on first sight, or find it; commit; return its status (D4).
+
+    Parallel callers with one new batch_id all land in the one row: the second INSERT waits for the first to
+    commit, then does nothing.
+    """
+    session.execute(_ENSURE_BATCH_SQL, {"batch_id": batch_id, "org": organization_id, "created_by": created_by})
+    status = session.execute(text("SELECT status FROM upload_batch WHERE batch_id = :b"),
+                             {"b": batch_id}).scalar_one()
+    session.commit()
+    return str(status)
+
+
+def create_upload(session: Session, *, file_id: uuid.UUID, batch_id: uuid.UUID, organization_id: uuid.UUID,
+                  file_name: str, size_bytes: int, content_type: str | None, s3_key: str, upload_id: str) -> None:
+    """Insert a `staged` upload_file row for a multipart upload just started (U1.3). The caller commits."""
+    ext = file_ext_of(file_name)
+    session.execute(text("""
+        INSERT INTO upload_file (file_id, batch_id, organization_id, file_name, file_ext, size_bytes, content_type,
+                                 s3_key, upload_id, is_archive)
+        VALUES (:file_id, :batch_id, :org, :file_name, :ext, :size_bytes, :content_type, :s3_key, :upload_id,
+                :is_archive)"""),
+        {"file_id": file_id, "batch_id": batch_id, "org": organization_id, "file_name": file_name, "ext": ext,
+         "size_bytes": size_bytes, "content_type": content_type, "s3_key": s3_key, "upload_id": upload_id,
+         "is_archive": ext == "zip"})
+

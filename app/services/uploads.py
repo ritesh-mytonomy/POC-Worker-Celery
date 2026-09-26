@@ -1,13 +1,19 @@
-"""Confirm an upload and hand it to the background (R2)."""
+"""Uploads: confirm and hand to the background (R2), and Anugrah's Upload API behind /api/uploads/*
+(upload-ingest-merge U1–U4, design.md §5.1)."""
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import PurePosixPath
+from typing import Any, TypeVar
 
+from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy.orm import Session
 
-from app import tasks_client
+from app import storage, tasks_client
+from app.config import get_settings
 from app.logging import get_logger
-from app.repositories import files
+from app.repositories import documents, files
 
 log = get_logger(__name__)
 Enqueue = Callable[[str, str], None]
@@ -36,3 +42,104 @@ def confirm(db: Session, file_id: uuid.UUID, enqueue: Enqueue | None = None) -> 
         return Confirmed("uploaded", enqueued=False)
     log.info("enqueued", file_id=str(file_id))
     return Confirmed("uploaded", enqueued=True)
+
+
+# ── Anugrah's Upload API ────────────────────────────────────────────────────
+# Error texts are his, word for word (U12.1); his client shows `detail` and spots duplicates by the word.
+
+T = TypeVar("T")
+MIB = 1024 * 1024
+S3_NOT_FOUND = {"NoSuchUpload", "NoSuchKey", "NoSuchBucket"}
+
+
+class UploadRefused(Exception):
+    """An Upload API refusal: the route answers `status` with {"detail": detail}."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        """Record the HTTP status and the detail text."""
+        super().__init__(detail)
+        self.status, self.detail = status, detail
+
+
+def duplicate_message(filename: str) -> str:
+    """Anugrah's duplicate text; the client marks a row Duplicate because it contains the word."""
+    return f"Duplicate file — {filename} has already been uploaded."
+
+
+def _s3(call: Callable[..., T], *args: Any) -> T:
+    """Run one storage call, turning S3 failures into Anugrah's responses: 404/502 "S3 error (…)", 500 otherwise."""
+    try:
+        return call(*args)
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        code, message = error.get("Code", ""), error.get("Message", str(exc))
+        raise UploadRefused(404 if code in S3_NOT_FOUND else 502, f"S3 error ({code}): {message}") from exc
+    except BotoCoreError as exc:
+        raise UploadRefused(500, f"Upload storage failed: {exc}") from exc
+
+
+def _organization() -> uuid.UUID:
+    """The one POC organization; auth and organizations are out of scope (requirements §1.2)."""
+    organization_id = get_settings().POC_ORGANIZATION_ID
+    if organization_id is None:
+        raise UploadRefused(503, "POC_ORGANIZATION_ID is not set")
+    return organization_id
+
+
+def incoming_key(organization_id: uuid.UUID, batch_id: uuid.UUID, file_id: uuid.UUID, filename: str) -> str:
+    """The server-built key (U1.6): ClinSync/incoming/{org}/{batch}/{file_id}_{name}. Opaque to the client."""
+    name = PurePosixPath(filename or "upload.bin").name
+    return f"ClinSync/incoming/{organization_id}/{batch_id}/{file_id}_{name}"
+
+
+def is_duplicate(db: Session, filename: str, file_size: int) -> bool:
+    """A library document with this name (case-insensitive) and size exists (U6.1)."""
+    found = documents.find_by_name_size(db, _organization(), filename, file_size)
+    db.rollback()                        # read-only; end the transaction
+    return found is not None
+
+
+@dataclass(frozen=True)
+class Initiated:
+    """What initiate returns: Anugrah's fields plus the batch."""
+
+    file_id: uuid.UUID
+    batch_id: uuid.UUID
+    upload_id: str
+    key: str
+    part_size: int
+    total_parts: int
+
+
+def initiate(db: Session, *, filename: str, file_size: int, content_type: str | None,
+             batch_id: uuid.UUID | None) -> Initiated:
+    """Register a file and start its multipart upload (U1): 413 too big, 400 type, 409 duplicate or closed batch."""
+    s = get_settings()
+    if file_size > s.MAX_UPLOAD_BYTES:
+        raise UploadRefused(413, f"File exceeds the {s.MAX_UPLOAD_BYTES // MIB} MB limit for cloud uploads.")
+    if files.file_ext_of(filename) not in s.ALLOWED_TOP_LEVEL_EXT:
+        raise UploadRefused(400, f"Unsupported file type: {filename}")
+    organization_id = _organization()
+    if is_duplicate(db, filename, file_size):
+        raise UploadRefused(409, duplicate_message(filename))
+    batch_id = batch_id or uuid.uuid4()
+    batch_status = files.ensure_batch(db, batch_id, organization_id, s.POC_USER_ID)
+    if batch_status in ("committed", "abandoned"):
+        raise UploadRefused(409, f"Batch {batch_id} is already {batch_status}.")
+
+    file_id = uuid.uuid4()
+    key = incoming_key(organization_id, batch_id, file_id, filename)
+    upload_id = _s3(storage.create_multipart, key, content_type)
+    try:
+        files.create_upload(db, file_id=file_id, batch_id=batch_id, organization_id=organization_id,
+                            file_name=filename, size_bytes=file_size, content_type=content_type, s3_key=key,
+                            upload_id=upload_id)
+        db.commit()
+    except Exception:
+        db.rollback()
+        storage.abort_multipart(key, upload_id)      # Anugrah's order: no multipart upload without its row
+        raise
+    log.info("upload_initiated", file_id=str(file_id), batch_id=str(batch_id), size_bytes=file_size)
+    return Initiated(file_id=file_id, batch_id=batch_id, upload_id=upload_id, key=key,
+                     part_size=s.UPLOAD_PART_SIZE_BYTES,
+                     total_parts=max(1, math.ceil(file_size / s.UPLOAD_PART_SIZE_BYTES)))

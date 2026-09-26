@@ -71,7 +71,7 @@ Plan mode is worth using for **0.2, 3.4, 5.2 and 6.2**.
 
 Every task here keeps the endpoint's contract. Its **Done when** always includes: the 0.2 fixture request is accepted unchanged, the response has every field of the 0.2 fixture response, and errors have the fixtures' `{"detail"}` shape (U12).
 
-- [ ] **3.1 `check-duplicate` and `initiate`** — `app/routes/upload_api.py`
+- [x] **3.1 `check-duplicate` and `initiate`** — `app/routes/upload_api.py`
   - Duplicates matched against the library. `initiate` creates or joins a batch via the optional `batchId`, creates the row and the multipart upload, builds the key, keeps the 413 and 409 responses, adds a 400 for disallowed types.
   - **Done when:** contract tests pass; parallel `initiate` calls with the same new `batchId` land in one batch; a call without one creates a new batch; a `batchId` of a committed or abandoned batch gets 409; errors on `/api/uploads/*` are `{"detail"}` while a `/api/v1/*` error is still the envelope.
   - _Requirements: U1, U6.1, U12_
