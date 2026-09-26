@@ -75,8 +75,11 @@ Any script runs on its own against a running stack, e.g. `python3 scripts/scenar
 docker compose run --rm --no-deps api pytest tests/
 ```
 
-560 tests. The run needs the compose Postgres and Redis for the integration tests (they skip if unreachable; set
-`REQUIRE_DB=1` to make them fail instead). A coverage gate for `engine/` and `workers/` (`--cov-fail-under=80`,
+About 700 tests. The run needs the compose Postgres and Redis for the integration tests (they skip if unreachable;
+set `REQUIRE_DB=1` to make them fail instead). Tests use their own database, `clinsync_test`, which Postgres creates
+from the same `init.sql` when its volume is first initialised (`infra/postgres/test_db.sh`); the running stack uses
+only `clinsync`, so its sweepers never touch test rows and the suite can run with the whole stack up. A volume
+created before this existed needs `docker compose down -v` once. A coverage gate for `engine/` and `workers/` (`--cov-fail-under=80`,
 currently ~97 %) is part of `pytest.ini`, so **partial runs add `--no-cov`**:
 
 ```bash

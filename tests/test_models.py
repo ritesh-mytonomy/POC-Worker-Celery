@@ -2,8 +2,10 @@
 from pathlib import Path
 
 from sqlalchemy import Connection, inspect, select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db_session
 from app.models import Base, UploadBatch, UploadFile
 from tests.db_helpers import POC_ORG, POC_USER, SIZE
@@ -63,3 +65,9 @@ def test_get_db_session_yields_working_session(pg_connection: Connection) -> Non
     session = next(generator)
     assert session.execute(text("SELECT 1")).scalar_one() == 1
     generator.close()
+
+
+def test_the_suite_uses_its_own_database(db_session: Session) -> None:
+    """Tests run on clinsync_test, never the stack's clinsync: the stack's sweepers cannot touch test rows."""
+    assert db_session.execute(text("SELECT current_database()")).scalar_one() == "clinsync_test"
+    assert make_url(get_settings().DATABASE_URL).database == "clinsync_test"

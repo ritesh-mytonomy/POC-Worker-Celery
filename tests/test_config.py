@@ -7,8 +7,11 @@ from app.config import Settings
 
 
 def make(**overrides: Any) -> Settings:
-    """Build Settings from POC defaults plus overrides, ignoring .env and the environment."""
-    values: dict[str, Any] = {"INTERNAL_API_KEY": "test-key", "DATABASE_URL": None}
+    """Build Settings from POC defaults plus overrides, ignoring .env and the environment.
+
+    POSTGRES_DB is pinned too: conftest points the environment at the test database (clinsync_test).
+    """
+    values: dict[str, Any] = {"INTERNAL_API_KEY": "test-key", "DATABASE_URL": None, "POSTGRES_DB": "clinsync"}
     values.update(overrides)
     return Settings(_env_file=None, **values)
 

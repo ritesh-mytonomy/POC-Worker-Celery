@@ -1,6 +1,9 @@
 """Shared fixtures for compose PostgreSQL: rolled-back sessions and committed rows.
 
-Database tests skip when PostgreSQL is unreachable, unless REQUIRE_DB=1, in which case they fail.
+Tests use their own database, clinsync_test, created from infra/postgres/init.sql when the Postgres container is
+first initialised (infra/postgres/test_db.sh). The stack's API and workers use only clinsync, so the running
+stack's sweepers can never touch a row a test commits. Database tests skip when PostgreSQL is unreachable, unless
+REQUIRE_DB=1, in which case they fail.
 """
 import os
 import sys
@@ -9,15 +12,25 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-import pytest
-from sqlalchemy import Connection, Engine, create_engine, text
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import NullPool
+from sqlalchemy.engine import make_url
 
-from app.config import get_settings
-from app.db import get_engine
-from tests.db_helpers import NOT_CONFIRMED, POC_ORG, POC_USER, SIZE
+TEST_DATABASE = "clinsync_test"
+# Point the settings at the test database BEFORE anything imports app.config (get_settings is cached). Both
+# forms: DATABASE_URL when it is set explicitly (as in .env), POSTGRES_DB for when it is built from POSTGRES_*.
+os.environ["POSTGRES_DB"] = TEST_DATABASE
+if os.environ.get("DATABASE_URL"):
+    os.environ["DATABASE_URL"] = make_url(os.environ["DATABASE_URL"]).set(database=TEST_DATABASE) \
+        .render_as_string(hide_password=False)
+
+import pytest  # noqa: E402 — after the test database is set
+from sqlalchemy import Connection, Engine, create_engine, text  # noqa: E402
+from sqlalchemy.exc import OperationalError  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+from sqlalchemy.pool import NullPool  # noqa: E402
+
+from app.config import get_settings  # noqa: E402
+from app.db import get_engine  # noqa: E402
+from tests.db_helpers import NOT_CONFIRMED, POC_ORG, POC_USER, SIZE  # noqa: E402
 
 
 def connect_or_skip() -> Connection:

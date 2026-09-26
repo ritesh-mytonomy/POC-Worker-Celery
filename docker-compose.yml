@@ -61,6 +61,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinsync}
     volumes:
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # then clinsync_test from the same schema: the test suite's own database, never the stack's
+      - ./infra/postgres/test_db.sh:/docker-entrypoint-initdb.d/test_db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
