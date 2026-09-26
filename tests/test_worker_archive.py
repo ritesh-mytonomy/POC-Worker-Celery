@@ -1,5 +1,6 @@
 """process_archive (design.md §8.3; R7, R8.1, R8.2): the loop, archive- vs entry-level failures, and every crash
 window of the §8.3 table — crash at the exact point, run again, check nothing is duplicated, orphaned or wrong."""
+import dataclasses
 import hashlib
 import uuid
 import zipfile
@@ -412,3 +413,73 @@ def test_real_heartbeat_409_stops_process_upload_without_finishing(ingest: Any, 
     monkeypatch.setattr(ingest, "s3", lambda: Store())
     ingest.process_upload.apply(kwargs={"file_id": str(FILE), "organization_id": str(ORG)}).get()
     assert 0 < len(bound.upserts) < 30, "stopped part-way, before the next entry"
+
+
+# --- Mac and hidden entries, folder depth (upload-ingest-merge U5.3, U5.4) ---
+
+MAC_EXPECTED = {
+    "a.docx": {"status": "processed", "s3_key": f"{PREFIX}0000_a.docx", "entry_index": 0},
+    "docs/b.docx": {"status": "processed", "s3_key": f"{PREFIX}0001_b.docx", "entry_index": 1},
+    "docs/deep/c.docx": {"status": "rejected", "entry_index": 2,
+                         "reject_reason": "Folders nested too deeply — at most one subfolder is supported"},
+}
+
+
+def assert_mac_deep_state(api: StatefulApi, store: MemoryStore) -> None:
+    """Three entries counted and numbered; no candidate for any Mac or hidden file; keys 0000 and 0001 only."""
+    assert api.entries_total == 3 and api.entries_done == 3
+    assert set(api.candidates) == set(MAC_EXPECTED), "no candidate for __MACOSX/ or .DS_Store"
+    for name, want in MAC_EXPECTED.items():
+        got = api.candidates[name]
+        assert (got["status"], got["entry_index"]) == (want["status"], want["entry_index"]), name
+        assert got.get("s3_key") == want.get("s3_key") and got.get("reject_reason") == want.get("reject_reason"), name
+    assert sorted(store.objects) == [f"{PREFIX}0000_a.docx", f"{PREFIX}0001_b.docx"]
+
+
+def test_mac_zip_numbers_only_real_entries_and_rejects_the_deep_one(ingest: Any, fixtures_dir: Path) -> None:
+    """mac_deep.zip: entries_total 3, positions 0–2 over real entries only, the two-deep entry rejected → partial."""
+    api, store = StatefulApi(), MemoryStore()
+    final = ingest.process_archive(api, claim(name="mac_deep.zip"), fixtures_dir / "mac_deep.zip", Beat(),
+                                   POC_LIMITS, store)
+    assert_mac_deep_state(api, store)
+    assert api.finish(final) == "partial"
+
+
+@pytest.mark.parametrize("k", range(3))
+def test_mac_zip_resumes_at_the_same_positions(ingest: Any, fixtures_dir: Path, k: int) -> None:
+    """A crash after entry K's progress, then a resume: the same positions, keys and candidates — the filter
+    runs before numbering, so every run sees the same list."""
+    api, store = StatefulApi(), MemoryStore()
+    api.crash_after = ("progress", k)
+    with pytest.raises(SimulatedCrash):
+        ingest.process_archive(api, claim(name="mac_deep.zip"), fixtures_dir / "mac_deep.zip", Beat(),
+                               POC_LIMITS, store)
+    api.crash_after, api.upserts = None, []
+    ingest.process_archive(api, claim(entries_done=api.entries_done, name="mac_deep.zip"),
+                           fixtures_dir / "mac_deep.zip", Beat(), POC_LIMITS, store)
+    assert api.upserts == list(range(k + 1, 3))
+    assert_mac_deep_state(api, store)
+
+
+@pytest.mark.parametrize("hidden", ["__MACOSX/._bomb.docx", ".bomb"])
+def test_a_bomb_hidden_in_an_upload_rejects_the_whole_archive(ingest: Any, docs: dict[str, bytes], tmp_path: Path,
+                                                              hidden: str) -> None:
+    """Hiding a bomb as a Mac or dot-file does not get it past the guards: archive-level Rejected, nothing staged."""
+    path = write_zip(tmp_path / "hidden.zip", [("a.docx", docs["docx"]), (hidden, bytes(200 * 1024 * 1024))])
+    api, store = StatefulApi(), MemoryStore()
+    with pytest.raises(Rejected, match="implausible compression ratio"):
+        ingest.process_archive(api, claim(), path, Beat(), POC_LIMITS, store)
+    assert api.candidates == {} and store.objects == {}
+
+
+def test_one_folder_deep_is_fine_and_the_depth_limit_is_configurable(ingest: Any, docs: dict[str, bytes],
+                                                                     tmp_path: Path) -> None:
+    """docs/a.docx is staged at the default depth 1; with max_folder_depth 0 it is rejected with the reason."""
+    path = write_zip(tmp_path / "one.zip", [("docs/a.docx", docs["docx"])])
+    api, store = StatefulApi(), MemoryStore()
+    assert ingest.process_archive(api, claim(), path, Beat(), POC_LIMITS, store) == FinalStatus("processed")
+    flat = dataclasses.replace(POC_LIMITS, max_folder_depth=0)
+    api = StatefulApi()
+    ingest.process_archive(api, claim(), path, Beat(), flat, MemoryStore())
+    assert api.candidates["docs/a.docx"]["reject_reason"] == \
+        "Folders nested too deeply — at most one subfolder is supported"

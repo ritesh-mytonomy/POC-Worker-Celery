@@ -6,11 +6,12 @@ import zipfile
 from pathlib import Path
 
 EXPECTED = ["valid.docx", "renamed_exe.docx", "renamed_zip.docx", "mixed.zip", "big30.zip", "bomb.zip",
-            "slip.zip", "encrypted.zip", "lying.zip", "dupnames.zip", "lying3.zip", "inner_bomb.zip", "big100.zip"]
+            "slip.zip", "encrypted.zip", "lying.zip", "dupnames.zip", "lying3.zip", "inner_bomb.zip", "big100.zip",
+            "mac_deep.zip"]
 
 
 def test_builds_every_fixture(fixtures_dir: Path) -> None:
-    """All thirteen files exist (§10.1 rev 1.3: dupnames.zip, lying3.zip, inner_bomb.zip, big100.zip added)."""
+    """All fourteen files exist (§10.1 rev 1.3 added dupnames, lying3, inner_bomb, big100; the merge mac_deep)."""
     assert sorted(p.name for p in fixtures_dir.iterdir()) == sorted(EXPECTED)
 
 
@@ -55,3 +56,6 @@ def test_fixture_properties(fixtures_dir: Path) -> None:
     with zipfile.ZipFile(f / "inner_bomb.zip") as zf:
         assert zf.namelist() == ["a.docx", "bomb.docx", "c.docx"]
         assert zf.getinfo("bomb.docx").compress_type == zipfile.ZIP_STORED
+    with zipfile.ZipFile(f / "mac_deep.zip") as zf:
+        assert zf.namelist() == ["a.docx", "__MACOSX/._a.docx", "docs/b.docx", ".DS_Store", "__MACOSX/docs/._b.docx",
+                                 "docs/deep/c.docx"]

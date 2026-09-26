@@ -23,6 +23,7 @@ class Limits:
     max_uncompressed_bytes: int
     max_compression_ratio: float
     allowed_entry_ext: frozenset[str]
+    max_folder_depth: int = 1            # upload-ingest-merge U5.4: at most one subfolder inside an archive
 
     @classmethod
     def from_settings(cls, settings: Any) -> "Limits":
@@ -32,6 +33,7 @@ class Limits:
             max_uncompressed_bytes=settings.MAX_ZIP_UNCOMPRESSED_BYTES,
             max_compression_ratio=settings.MAX_COMPRESSION_RATIO,
             allowed_entry_ext=frozenset(settings.ALLOWED_ZIP_ENTRY_EXT),
+            max_folder_depth=settings.MAX_ZIP_FOLDER_DEPTH,
         )
 
 
@@ -132,6 +134,23 @@ def inspect_archive(zf: zipfile.ZipFile, limits: Limits) -> list[zipfile.ZipInfo
         if len(e.filename) > MAX_ENTRY_NAME_CHARS:
             raise Rejected(f"'{e.filename[:80]}…' has a path longer than {MAX_ENTRY_NAME_CHARS} characters")
     return entries
+
+
+def candidate_entries(entries: list[zipfile.ZipInfo]) -> list[zipfile.ZipInfo]:
+    """The entries that can become candidates: not under __MACOSX/, not a hidden (dot) file; order kept (U5.3).
+
+    Call it only AFTER inspect_archive: the safety guards must see every entry, hidden ones included — a bomb
+    named ".x" or placed under __MACOSX/ is still refused. Never used to judge a .docx, whose own parts include
+    _rels/.rels. Positions are numbered over this list, so staging keys and resume stay deterministic.
+    """
+    return [e for e in entries
+            if "__MACOSX" not in PurePosixPath(e.filename).parts[:-1]
+            and not PurePosixPath(e.filename).name.startswith(".")]
+
+
+def folder_depth(name: str) -> int:
+    """How many folders deep an entry sits: "a.docx" is 0, "docs/a.docx" is 1 (U5.4)."""
+    return len(PurePosixPath(name).parts) - 1
 
 
 def assert_safe_path(name: str) -> None:

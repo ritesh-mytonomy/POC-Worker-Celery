@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     MAX_COMPRESSION_RATIO: int = 200
     ALLOWED_ZIP_ENTRY_EXT: CsvList = ["docx"]
     ALLOWED_TOP_LEVEL_EXT: CsvList = ["docx", "zip"]
+    MAX_ZIP_FOLDER_DEPTH: int = 1        # deeper entries are rejected (upload-ingest-merge U5.4)
 
     # POC only — absent in production
     ENTRY_DELAY_SECONDS: float = 0

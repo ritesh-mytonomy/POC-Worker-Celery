@@ -112,7 +112,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** each candidate's hash equals `sha256` of its bytes, with no second read; the engine purity test still passes.
   - _Requirements: U5.2_
 
-- [ ] **4.2 Mac files and folder depth**
+- [x] **4.2 Mac files and folder depth**
   - **Done when:** a fixture zip with `__MACOSX/` entries and a deep folder gives the expected `entries_total` and one depth rejection; the 16 crash-window tests still pass.
   - _Requirements: U5.3, U5.4_
 

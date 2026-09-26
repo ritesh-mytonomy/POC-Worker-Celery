@@ -1,5 +1,6 @@
 """Tests for engine/file_checks.py: detection (design.md §8.4; R5.1, R5.2, R5.5), archive guards (§8.5; R6.1–R6.6,
 R6.9, R6.10) and streaming extraction (R6.7, R6.8, NFR-4). No services, no settings."""
+import dataclasses
 import hashlib
 import io
 import shutil
@@ -12,6 +13,7 @@ import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import replace
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +21,8 @@ import pytest
 
 from engine import file_checks
 from engine.file_checks import (
-    CHUNK, WORDML, Detection, Rejected, assert_safe_path, detect_file_type, extract_streaming, inspect_archive,
-    mismatch_reason,
+    CHUNK, WORDML, Detection, Limits, Rejected, assert_safe_path, candidate_entries, detect_file_type,
+    extract_streaming, folder_depth, inspect_archive, mismatch_reason,
 )
 from tests.engine_helpers import POC_LIMITS, write_zip
 
@@ -469,3 +471,57 @@ def test_extraction_hashes_the_entry_as_it_writes_it(fixtures_dir: Path, tmp_pat
         out = extract_streaming(zf, info, tmp_dir=tmp_path, digest=digest)
     assert digest.hexdigest() == expected == hashlib.sha256(out.read_bytes()).hexdigest()
     assert opens == ["doc1.docx"]
+
+
+
+# --- Mac and hidden entries: guards see everything, candidates skip them (upload-ingest-merge U5.3, U5.4) ---
+
+def bomb_bytes() -> bytes:
+    """200 MiB of zeros: deflates to ~200 KB, a ratio far over 200."""
+    return bytes(200 * 1024 * 1024)
+
+
+@pytest.mark.parametrize("hidden", ["__MACOSX/bomb.docx", "__MACOSX/docs/._bomb.docx", ".bomb", "docs/.bomb.docx"])
+def test_a_bomb_hidden_as_a_mac_or_dot_file_is_still_rejected(tmp_path: Path, hidden: str) -> None:
+    """The guards run over EVERY entry before anything is filtered: hiding a bomb does not get it past them."""
+    path = write_zip(tmp_path / "hidden.zip", [("a.docx", b"x"), (hidden, bomb_bytes())])
+    with zipfile.ZipFile(path) as zf, pytest.raises(Rejected, match="implausible compression ratio"):
+        inspect_archive(zf, POC_LIMITS)
+
+
+def test_hidden_entries_still_count_towards_the_entry_and_size_caps(tmp_path: Path) -> None:
+    """Mac and dot-files count for max_entries (R6.2) like any entry; filtering comes later."""
+    members = [("a.docx", b"x"), *[(f"__MACOSX/._{i}", b"x") for i in range(5)]]
+    path = write_zip(tmp_path / "many.zip", members)
+    tight = dataclasses.replace(POC_LIMITS, max_entries=5)
+    with zipfile.ZipFile(path) as zf, pytest.raises(Rejected, match="6 files; limit is 5"):
+        inspect_archive(zf, tight)
+
+
+def test_candidate_entries_drop_mac_and_dot_files_keeping_order(fixtures_dir: Path) -> None:
+    """Only real entries remain, in directory order — the list positions are numbered over."""
+    with zipfile.ZipFile(fixtures_dir / "mac_deep.zip") as zf:
+        guarded = inspect_archive(zf, POC_LIMITS)
+        assert len(guarded) == 6                                             # the guards saw all six
+        assert [e.filename for e in candidate_entries(guarded)] == ["a.docx", "docs/b.docx", "docs/deep/c.docx"]
+
+
+def test_a_docx_keeps_its_dot_files_and_still_detects_as_docx(fixtures_dir: Path) -> None:
+    """A .docx's own parts include _rels/.rels: detection never filters, so a normal .docx still passes."""
+    path = fixtures_dir / "valid.docx"
+    with zipfile.ZipFile(path) as zf:
+        assert "_rels/.rels" in zf.namelist()
+    assert detect_file_type(path, POC_LIMITS) == Detection("docx")
+
+
+@pytest.mark.parametrize(("name", "depth"), [("a.docx", 0), ("docs/a.docx", 1), ("docs/deep/a.docx", 2)])
+def test_folder_depth(name: str, depth: int) -> None:
+    """Depth counts folders, not the file."""
+    assert folder_depth(name) == depth
+
+
+def test_limits_from_settings_carry_the_folder_depth() -> None:
+    """Limits.from_settings reads MAX_ZIP_FOLDER_DEPTH beside the R6 thresholds (the worker's LIMITS use it)."""
+    settings = SimpleNamespace(MAX_ZIP_ENTRIES=500, MAX_ZIP_UNCOMPRESSED_BYTES=1, MAX_COMPRESSION_RATIO=200,
+                               ALLOWED_ZIP_ENTRY_EXT=["docx"], MAX_ZIP_FOLDER_DEPTH=2)
+    assert Limits.from_settings(settings).max_folder_depth == 2

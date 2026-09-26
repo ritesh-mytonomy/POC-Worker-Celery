@@ -178,6 +178,23 @@ def big100_zip() -> bytes:
     return _zip([(f"doc{i:03d}.docx", doc) for i in range(1, 101)])
 
 
+def mac_deep_zip() -> bytes:
+    """mac_deep.zip — a zip made on a Mac, plus a folder two deep (upload-ingest-merge U5.3, U5.4; U-S4).
+
+    Real entries a.docx, docs/b.docx and docs/deep/c.docx, interleaved with the AppleDouble files a Mac adds
+    (__MACOSX/._a.docx, __MACOSX/docs/._b.docx) and a .DS_Store. Expected: entries_total 3 (the Mac and hidden
+    files are neither counted nor numbered), 0000_a.docx and 0001_b.docx staged, docs/deep/c.docx rejected as
+    nested too deeply — partial.
+    """
+    apple_double = b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        " + bytes(64)
+    return _zip([("a.docx", docx_bytes("Mac archive, top level")),
+                 ("__MACOSX/._a.docx", apple_double),
+                 ("docs/b.docx", docx_bytes("Mac archive, one folder down")),
+                 (".DS_Store", b"Bud1" + bytes(60)),
+                 ("__MACOSX/docs/._b.docx", apple_double),
+                 ("docs/deep/c.docx", docx_bytes("Mac archive, two folders down"))])
+
+
 FIXTURES: dict[str, Callable[[], bytes]] = {
     "valid.docx": valid_docx,
     "renamed_exe.docx": renamed_exe_docx,
@@ -192,6 +209,7 @@ FIXTURES: dict[str, Callable[[], bytes]] = {
     "lying3.zip": lying3_zip,
     "inner_bomb.zip": inner_bomb_zip,
     "big100.zip": big100_zip,
+    "mac_deep.zip": mac_deep_zip,
 }
 
 

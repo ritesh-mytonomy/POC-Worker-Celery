@@ -22,7 +22,8 @@ from app.constants import (
 from app.errors import ClaimSuperseded
 from app.logging import configure_logging, get_logger
 from engine.file_checks import (
-    UNREADABLE, Limits, Rejected, detect_file_type, extract_streaming, inspect_archive, mismatch_reason,
+    UNREADABLE, Limits, Rejected, candidate_entries, detect_file_type, extract_streaming, folder_depth,
+    inspect_archive, mismatch_reason,
 )
 from workers.clients import (
     BoundClient, FileClaim, FinalStatus, InternalClient, S3ConfigError, S3ObjectNotFound, S3Store, Transient,
@@ -227,6 +228,8 @@ def _process_entry(api: BoundClient, claim: FileClaim, zf: zipfile.ZipFile, e: z
                  entry=e.filename, reason=reason)
         return True
 
+    if folder_depth(e.filename) > limits.max_folder_depth:                # U5.4 — entry-level; the archive continues
+        return reject("Folders nested too deeply — at most one subfolder is supported")
     if not ext:
         return reject("Files without an extension are not supported")
     if ext not in limits.allowed_entry_ext:                               # R7.2 — not stored
@@ -268,8 +271,9 @@ def process_archive(api: BoundClient, claim: FileClaim, path: Path, beat: Heartb
         raise Rejected(mismatch_reason("zip", outer))            # e.g. a .docx renamed .zip
     try:
         with _open_archive(path) as zf:
-            entries = inspect_archive(zf, limits)                # R6 — archive-level
-            api.progress(entries_total=len(entries))             # R7.1
+            guarded = inspect_archive(zf, limits)                # R6 — archive-level, EVERY entry, hidden ones too
+            entries = candidate_entries(guarded)                 # U5.3 — only then drop __MACOSX/ and dot-files
+            api.progress(entries_total=len(entries))             # R7.1 — counted, and numbered, after the filter
             rejected_any = False
             for i, e in enumerate(entries):                      # R7.5 — directory order
                 if i < claim.entries_done:                       # R8.2 — resume
