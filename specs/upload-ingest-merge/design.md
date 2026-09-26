@@ -208,7 +208,9 @@ No `get_object`, no hashing (U3.3). A test spies on `storage` and asserts nothin
 ```python
 def commit(db, batch_id):
     """Add whatever is ready in this batch. Safe to call again, and again later."""
-    batch = batches.lock(db, batch_id)                           # SELECT … FOR UPDATE: one commit at a time
+    org = batches.organization_of(db, batch_id)                  # plain read; 404 if no such batch
+    documents.lock_organization(db, org)                         # pg_advisory_xact_lock — one commit per org at a time
+    batch = batches.lock(db, batch_id)                           # SELECT … FOR UPDATE — always after the org lock
     added, skipped, removed_keys = [], [], []
     for c in candidates.of_finished_files(db, batch_id):         # both statuses; ordered by file, then entry_index
         if c.status == "rejected":
@@ -218,10 +220,14 @@ def commit(db, batch_id):
         if dup:
             c.resolution = "discard"; skipped.append((c, reason(dup)))
         else:
-            c.resolution = "create_new"
-            doc = documents.insert(db, c)                        # id = uuid5(ns, staged_id)
-            storage.copy(c.s3_key, doc.s3_key)                   # staging → processed
-            added.append(doc)
+            doc = documents.insert(db, c)                        # id = uuid5(ns, staged_id); in a savepoint
+            if doc is None:                                      # uq_org_title violated: only the savepoint rolls back
+                c.resolution = "discard"
+                skipped.append((c, "A document with this title is already in the library"))
+            else:
+                c.resolution = "create_new"
+                storage.copy(c.s3_key, doc.s3_key)               # staging → processed
+                added.append(doc)
         removed_keys.append(c.s3_key)
         candidates.delete(db, c)                                 # D12 — the library row is the record
     audit.write(db, "batch_committed", "upload_batch", batch_id,
@@ -233,7 +239,11 @@ def commit(db, batch_id):
     return CommitResult(added, skipped, still_in_progress=batches.in_progress_count(db, batch_id))
 ```
 
-`documents.find_duplicate` checks `content_hash` first, then `title_norm` — including documents added earlier in this same commit, which is how two identical files in one batch become one document. The database's `uq_org_title` is the last line of defence.
+`documents.find_duplicate` checks `content_hash` first, then `title_norm` — including documents added earlier in this same commit, which is how two identical files in one batch become one document.
+
+**Why an organization lock.** The batch lock alone lets two *different* batches commit at once. Both could pass the content check for the same bytes under different titles, and both would become documents — `documents` has no unique content constraint (UN-4). So commit first takes `pg_advisory_xact_lock(hashtextextended(organization_id::text, 0))`, held until its transaction ends, and only then the batch row lock. Commits of one organization run one at a time; the fixed order (organization, then batch) avoids deadlocks.
+
+**If `uq_org_title` still fires.** `documents.insert` runs in a savepoint. A `uq_org_title` violation — possible only from a writer outside commit — rolls back just that insert; the candidate is discarded and skipped with the reason *"A document with this title is already in the library"*, and the commit carries on.
 
 **Why the document id is derived, not random.** If the process dies after some copies but before `db.commit()`, the rows roll back but the copied objects remain. With a random id, the re-run would copy to *new* keys and orphan the first copies. `uuid5(namespace, staged_id)` gives the re-run the same id, the same key, and overwrites the same object — the same idea as the Ingest POC's deterministic staging keys.
 

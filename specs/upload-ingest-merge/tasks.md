@@ -137,6 +137,8 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
     - two identical files → one document
     - a commit crashed after its copies, then re-run, leaves no orphan objects
     - two concurrent commits of the same batch add each document once
+    - two batches committing the same content at once add one document (the organization lock)
+    - a `uq_org_title` violation is a skip with the reason "A document with this title is already in the library", not an error
     - candidates are deleted, and one `batch_committed` audit row is written per commit
     - staging objects of removed candidates are gone
     - the batch becomes `committed` once all files are finished and no candidates remain
