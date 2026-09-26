@@ -6,10 +6,12 @@ From the host, standard library only, the calls s3ChunkedUpload.ts and UploadQue
   complete — then wait for the Ingest worker to process both.
 Two files: valid.docx (one part) and padded.docx (valid.docx plus a 9 MiB stored media entry — two 8 MiB parts).
 Assert: both land in the one batch, complete answers `uploaded`, every presigned URL names localhost:4566, and each
-file ends `processed` with exactly one candidate and its incoming/ object gone. Becomes U-S1 in Phase 7.
+file ends `processed` with exactly one candidate, carrying the SHA-256 of its bytes, and its incoming/ object
+gone. Becomes U-S1 in Phase 7.
 
 Usage: python3 scripts/check_m1_upload.py [--keep]
 """
+import hashlib
 import http.client
 import io
 import os
@@ -108,6 +110,10 @@ def main() -> int:
         s.check("one processed candidate per file",
                 sorted((c["file_name"], c["status"]) for c in candidates), sorted((n, "processed") for n in files))
         s.check("incoming/ objects gone", [k for k in keys if lib.s3_keys(k)], [])
+        stored = dict(line.split("|") for line in lib.psql(
+            f"SELECT file_name || '|' || content_hash FROM staged_document WHERE batch_id = '{batch_id}'").splitlines())
+        s.check("each candidate's content_hash is the SHA-256 of the bytes uploaded (U5.2)", stored,
+                {name: hashlib.sha256(data).hexdigest() for name, data in files.items()})
         lib.assert_no_undeliverable(s)
     finally:
         if lib.api("GET", f"/api/v1/uploads/batches/{batch_id}")[0] == 200:     # created by the first initiate
