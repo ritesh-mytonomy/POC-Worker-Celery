@@ -35,7 +35,13 @@ INTENDED = {
     "initiate__409_duplicate": "U1.4 — the match is against library documents",
     "abort__200_unknown_pair": "U4.1 / U2.2 — a pair matching no row is 404 (the client ignores abort's answer)",
     "list_parts__404_after_abort": "U2.2 — the row check comes first: an aborted file is 409, still a failure",
+    "complete": "U3.4 — status is `uploaded` (was stored)",
+    "complete__zip_extracting": "U3.4 — a zip is `uploaded` too (was extracting)",
+    "complete__409_already_completed": "U3.5 — a second complete is 200 with the current status",
+    "complete__409_duplicate_by_hash": "D7 — complete no longer hashes; commit keeps duplicates out of the library",
+    "complete__400_validation": "U3.3 — complete no longer validates content; the worker does",
 }
+NOT_API = {"s3_put_part"}              # the browser's PUT to S3: proved by scripts/check_presign_from_host.sh
 
 
 def fixture(name: str) -> dict[str, Any]:
@@ -233,3 +239,81 @@ def test_list_uploads(client: TestClient, db_session: Session) -> None:
     body = assert_success_fields(response, fx)
     assert [item["id"] for item in body] == [second["id"], first["id"]]
     assert set(fx["response"]["body"][0]) == set(body[0])
+
+
+# ── 3.4 complete ───────────────────────────────────────────────────────────
+
+def uploaded_parts(client: TestClient, fake_storage: FakeStorage, filename: str, size: int) -> dict[str, Any]:  # noqa: F811
+    """initiate → presign → the browser's PUTs, as start() does; return the values complete's body carries."""
+    ids = client.post("/api/uploads/initiate", json={"filename": filename, "fileSize": size,
+                                                      "contentType": "application/octet-stream"}).json()
+    numbers = list(range(1, ids["totalParts"] + 1))
+    client.post("/api/uploads/parts/presign", json={"key": ids["key"], "uploadId": ids["uploadId"],
+                                                    "partNumbers": numbers})
+    parts = [{"partNumber": n, "etag": fake_storage.put_part(ids["uploadId"], n)} for n in numbers]
+    return {"id": ids["id"], "fileId": ids["fileId"], "key": ids["key"], "uploadId": ids["uploadId"], "parts": parts}
+
+
+def complete_as_fixture(client: TestClient, fake_storage: FakeStorage, name: str) -> tuple[Any, dict[str, Any]]:  # noqa: F811
+    """Upload the fixture's file (same name and size), then send the fixture's complete body with our ids."""
+    request = fixture(name)["request"]["body"]
+    ids = uploaded_parts(client, fake_storage, request["filename"], request["fileSize"])
+    return send(client, name, **ids)
+
+
+def test_complete(client: TestClient, fake_storage: FakeStorage, enqueued: Recorder) -> None:  # noqa: F811
+    """Every fixture field plus batchId; status is `uploaded` (INTENDED, U3.4: was "stored"); enqueued once."""
+    response, fx = complete_as_fixture(client, fake_storage, "complete")
+    body = assert_success_fields(response, fx)
+    assert body["status"] == "uploaded" and uuid.UUID(body["batchId"])
+    assert body["key"].startswith(f"ClinSync/incoming/{POC_ORG}/{body['batchId']}/{body['id']}_")
+    assert enqueued.calls == [(body["id"], str(POC_ORG))]
+
+
+def test_complete__zip_extracting(client: TestClient, fake_storage: FakeStorage, enqueued: Recorder) -> None:  # noqa: F811
+    """INTENDED (U3.4): a zip is no longer `extracting` — every file goes the same way, `uploaded` and enqueued."""
+    response, fx = complete_as_fixture(client, fake_storage, "complete__zip_extracting")
+    assert assert_success_fields(response, fx)["status"] == "uploaded" and len(enqueued.calls) == 1
+
+
+def test_complete__409_already_completed(client: TestClient, fake_storage: FakeStorage,  # noqa: F811
+                                         enqueued: Recorder) -> None:  # noqa: F811
+    """INTENDED (U3.5): a second complete returns the current status with 200 and enqueues nothing more."""
+    request = fixture("complete__409_already_completed")["request"]["body"]
+    ids = uploaded_parts(client, fake_storage, request["filename"], request["fileSize"])
+    send(client, "complete", **ids)
+    response, fx = send(client, "complete__409_already_completed", **ids)
+    assert assert_success_fields(response, fixture("complete"))["status"] == "uploaded"
+    assert len(enqueued.calls) == 1
+
+
+@pytest.mark.parametrize("name", ["complete__409_duplicate_by_hash", "complete__400_validation"])
+def test_complete_no_longer_hashes_or_validates(client: TestClient, fake_storage: FakeStorage,  # noqa: F811
+                                                enqueued: Recorder, name: str) -> None:  # noqa: F811
+    """INTENDED (D7, U3.3): same bytes under a new name, or bytes that are not a PDF, complete `uploaded` —
+    the worker checks content and hashes; commit keeps duplicates out of the library."""
+    response, _ = complete_as_fixture(client, fake_storage, name)
+    assert assert_success_fields(response, fixture("complete"))["status"] == "uploaded"
+    assert len(enqueued.calls) == 1
+
+
+def test_complete__400_no_parts(client: TestClient, fake_storage: FakeStorage) -> None:  # noqa: F811
+    """parts [] → 400 with exactly the fixture's detail."""
+    request = fixture("complete__400_no_parts")["request"]["body"]
+    ids = uploaded_parts(client, fake_storage, request["filename"], request["fileSize"])
+    response, fx = send(client, "complete__400_no_parts", **{**ids, "parts": []})
+    assert_same_error(response, fx)
+
+
+def test_complete__404_unknown(client: TestClient) -> None:
+    """The fixture's unknown key → 404 with exactly its detail."""
+    response, fx = send(client, "complete__404_unknown")
+    assert_same_error(response, fx)
+
+
+def test_every_fixture_has_a_contract_case() -> None:
+    """Each API fixture in tests/fixtures/upload_api/ is exercised by name in this module (21 of 22; not the S3 PUT)."""
+    source = Path(__file__).read_text()
+    names = {f.stem for f in FIXTURES.glob("*.json")} - NOT_API
+    assert len(names) == 21
+    assert {n for n in names if f'"{n}"' not in source and f"test_{n}(" not in source} == set()

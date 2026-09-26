@@ -164,3 +164,44 @@ class UploadRecordResponse(BaseModel):
 def list_uploads(db: Session = Depends(get_db_session)) -> list[UploadRecordResponse]:
     """The organization's uploads past `uploading`, newest first (U4.2)."""
     return [UploadRecordResponse(**r) for r in _answer(lambda: uploads.list_uploads(db))]
+
+
+# ── complete: the join point ────────────────────────────────────────────────
+
+class PartInput(BaseModel):
+    """One uploaded part and the ETag S3 gave it."""
+
+    partNumber: int
+    etag: str
+
+
+class CompleteRequest(BaseModel):
+    """Anugrah's body, unchanged; id, fileId, filename, fileSize and contentType are accepted, not needed."""
+
+    id: str | None = None
+    fileId: str | None = None
+    key: str
+    uploadId: str
+    filename: str
+    fileSize: int = Field(gt=0)
+    contentType: str | None = None
+    parts: list[PartInput]
+
+
+class CompleteResponse(BaseModel):
+    """Anugrah's fields, plus batchId; status is now `uploaded` (U3.4)."""
+
+    id: str
+    location: str
+    key: str
+    status: str
+    batchId: str
+
+
+@router.post("/complete", response_model=CompleteResponse)
+def complete(body: CompleteRequest, db: Session = Depends(get_db_session)) -> CompleteResponse:
+    """Complete the S3 upload and hand the file to the Ingest pipeline, as confirm does (U3)."""
+    done = _answer(lambda: uploads.complete(db, key=body.key, upload_id=body.uploadId,
+                                            parts=[p.model_dump() for p in body.parts]))
+    return CompleteResponse(id=str(done.file_id), location=done.location, key=done.key, status=done.status,
+                            batchId=str(done.batch_id))

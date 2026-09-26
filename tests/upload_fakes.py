@@ -9,6 +9,9 @@ import pytest
 from app import storage, tasks_client
 from app.config import get_settings
 
+NO_SUCH_UPLOAD = "The specified upload does not exist."                    # S3's messages
+INVALID_PART = "One or more of the specified parts could not be found."
+
 
 @dataclass
 class FakeStorage:
@@ -43,17 +46,17 @@ class FakeStorage:
         """Stored parts in order; a gone upload raises NoSuchUpload."""
         self.calls.append("list_parts")
         if upload_id not in self.uploads:
-            raise storage.NoSuchUpload(upload_id)
+            raise storage.NoSuchUpload(NO_SUCH_UPLOAD, "NoSuchUpload")
         return [{"partNumber": n, "etag": e, "size": 8} for n, e in sorted(self.uploads[upload_id].items())]
 
     def complete_multipart(self, key: str, upload_id: str, parts: list[dict[str, Any]]) -> str:
         """Assemble: every part must be stored with that ETag, else InvalidParts; the upload is then gone."""
         self.calls.append("complete_multipart")
         if upload_id not in self.uploads:
-            raise storage.NoSuchUpload(upload_id)
+            raise storage.NoSuchUpload(NO_SUCH_UPLOAD, "NoSuchUpload")
         stored = self.uploads[upload_id]
         if any(stored.get(int(p["partNumber"])) != p["etag"] for p in parts):
-            raise storage.InvalidParts("InvalidPart")
+            raise storage.InvalidParts(INVALID_PART, "InvalidPart")
         del self.uploads[upload_id]
         self.objects.add(key)
         return f"http://localstack:4566/{get_settings().S3_BUCKET}/{key}"

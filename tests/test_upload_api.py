@@ -4,13 +4,16 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
+import boto3
 import pytest
+from botocore.config import Config
 from botocore.exceptions import ClientError, EndpointConnectionError
+from botocore.stub import Stubber
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
-from app import storage
+from app import storage, tasks_client
 from app.config import get_settings
 from app.db import get_db_session
 from app.main import app
@@ -376,3 +379,144 @@ def test_list_hides_files_still_uploading(client: TestClient, db_session: Sessio
     assert (item["id"], item["filename"], item["status"], item["s3_key"]) == \
         (done["id"], "done.docx", "processed", done["key"])
     assert (item["s3_location"], item["parent_id"], item["source_path"]) == (None, None, None)
+
+
+# ── 3.4 complete (U3, design.md §5.3) ──────────────────────────────────────
+
+REAL_COMPLETE, REAL_EXISTS = storage.complete_multipart, storage.exists     # captured before the fake patches them
+
+
+def upload(client: TestClient, fake: FakeStorage, name: str = "valid.docx", size: int = 20 * MIB) -> dict[str, Any]:
+    """initiate → presign → PUT every part, as the browser does; return the body complete needs."""
+    body = initiate(client, name, size).json()
+    numbers = list(range(1, body["totalParts"] + 1))
+    presign(client, body, numbers)
+    parts = [{"partNumber": n, "etag": fake.put_part(body["uploadId"], n)} for n in numbers]
+    return {**body, "parts": parts}
+
+
+def complete(client: TestClient, body: dict[str, Any], parts: list[dict[str, Any]] | None = None) -> Any:
+    """POST complete with Anugrah's full body."""
+    return client.post("/api/uploads/complete", json={
+        "id": body["id"], "fileId": body["fileId"], "key": body["key"], "uploadId": body["uploadId"],
+        "filename": "valid.docx", "fileSize": 20 * MIB, "contentType": "application/octet-stream",
+        "parts": body["parts"] if parts is None else parts})
+
+
+@pytest.fixture
+def stubbed_s3(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stubber]:
+    """The REAL storage.complete_multipart / exists on a stubbed internal client: a call not queued fails."""
+    client = boto3.client("s3", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x",
+                          endpoint_url="http://s3.invalid", config=Config(retries={"total_max_attempts": 1}))
+    monkeypatch.setattr(storage, "internal_client", lambda: client)
+    monkeypatch.setattr(storage, "complete_multipart", REAL_COMPLETE)
+    monkeypatch.setattr(storage, "exists", REAL_EXISTS)
+    with Stubber(client) as stubber:
+        yield stubber
+        stubber.assert_no_pending_responses()
+
+
+def test_complete_never_downloads_hashes_or_heads_the_object(
+    client: TestClient, db_session: Session, fake_storage: FakeStorage, stubbed_s3: Stubber,  # noqa: F811
+    enqueued: Recorder  # noqa: F811
+) -> None:
+    """U3.3 spy: only CompleteMultipartUpload reaches S3 — any GetObject, HeadObject or download would hit an
+    unqueued stub and fail. Then the Ingest confirm: uploaded, enqueued once with the file and organization."""
+    body = upload(client, fake_storage)
+    stubbed_s3.add_response("complete_multipart_upload", {"Location": "x"}, {
+        "Bucket": get_settings().S3_BUCKET, "Key": body["key"], "UploadId": body["uploadId"],
+        "MultipartUpload": {"Parts": [{"PartNumber": p["partNumber"], "ETag": p["etag"]} for p in body["parts"]]}})
+    response = complete(client, body, parts=list(reversed(body["parts"])))       # sorted before S3 sees them
+    assert response.status_code == 200, response.text
+    assert response.json() == {"id": body["id"], "location": f"s3://{get_settings().S3_BUCKET}/{body['key']}",
+                               "key": body["key"], "status": "uploaded", "batchId": body["batchId"]}
+    assert status_of(db_session, body) == "uploaded" and enqueued.calls == [(body["id"], str(POC_ORG))]
+
+
+def test_no_such_upload_but_the_object_exists_carries_on_to_confirm(
+    client: TestClient, db_session: Session, fake_storage: FakeStorage, stubbed_s3: Stubber,  # noqa: F811
+    enqueued: Recorder  # noqa: F811
+) -> None:
+    """§5.3 retry path: an earlier complete assembled the object, then died before confirm. S3 now says
+    NoSuchUpload; a HEAD finds the object, so the file is confirmed and enqueued once."""
+    body = upload(client, fake_storage)
+    stubbed_s3.add_client_error("complete_multipart_upload", service_error_code="NoSuchUpload", http_status_code=404)
+    stubbed_s3.add_response("head_object", {"ContentLength": 20 * MIB},
+                            {"Bucket": get_settings().S3_BUCKET, "Key": body["key"]})
+    response = complete(client, body)
+    assert response.status_code == 200 and response.json()["status"] == "uploaded"
+    assert status_of(db_session, body) == "uploaded" and len(enqueued.calls) == 1
+
+
+def test_no_such_upload_and_no_object_is_400_and_the_status_stays(
+    client: TestClient, db_session: Session, fake_storage: FakeStorage, stubbed_s3: Stubber,  # noqa: F811
+    enqueued: Recorder  # noqa: F811
+) -> None:
+    """The upload expired and nothing was assembled → 400 "Upload session expired — …"; still uploading."""
+    body = upload(client, fake_storage)
+    stubbed_s3.add_client_error("complete_multipart_upload", service_error_code="NoSuchUpload", http_status_code=404)
+    stubbed_s3.add_client_error("head_object", service_error_code="404", http_status_code=404)
+    response = complete(client, body)
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Upload session expired — start the upload again"}
+    assert status_of(db_session, body) == "uploading" and enqueued.calls == []
+
+
+def test_invalid_parts_are_400_and_the_file_can_retry(client: TestClient, db_session: Session,
+                                                      fake_storage: FakeStorage,  # noqa: F811
+                                                      enqueued: Recorder) -> None:  # noqa: F811
+    """A wrong ETag → 400 with S3's code and message (U3.6); the file stays uploading and completes on retry."""
+    body = upload(client, fake_storage)
+    wrong = [{**body["parts"][0], "etag": '"not-it"'}, *body["parts"][1:]]
+    response = complete(client, body, parts=wrong)
+    assert response.status_code == 400
+    assert response.json() == {"detail": "S3 error (InvalidPart): One or more of the specified parts could not be "
+                                         "found."}
+    assert status_of(db_session, body) == "uploading" and enqueued.calls == []
+    assert complete(client, body).json()["status"] == "uploaded" and len(enqueued.calls) == 1
+
+
+def test_complete_again_returns_the_status_now_without_enqueueing(client: TestClient, db_session: Session,
+                                                                  fake_storage: FakeStorage,  # noqa: F811
+                                                                  enqueued: Recorder) -> None:  # noqa: F811
+    """U3.5: after the worker moved it on, complete answers that status, touches nothing, enqueues nothing."""
+    body = upload(client, fake_storage)
+    complete(client, body)
+    db_session.execute(text("UPDATE upload_file SET status = 'processed' WHERE file_id = :id"), {"id": body["id"]})
+    db_session.commit()
+    calls = list(fake_storage.calls)
+    response = complete(client, body)
+    assert response.status_code == 200 and response.json()["status"] == "processed"
+    assert fake_storage.calls == calls and len(enqueued.calls) == 1
+
+
+def test_complete_after_abort_answers_the_cancelled_status(client: TestClient, fake_storage: FakeStorage,  # noqa: F811
+                                                           enqueued: Recorder) -> None:  # noqa: F811
+    """A cancelled file is past uploading: complete returns `error` and never enqueues."""
+    body = upload(client, fake_storage)
+    abort(client, body)
+    response = complete(client, body)
+    assert response.status_code == 200 and response.json()["status"] == "error" and enqueued.calls == []
+
+
+def test_complete_accepts_a_file_never_presigned(client: TestClient, db_session: Session,
+                                                 fake_storage: FakeStorage) -> None:  # noqa: F811
+    """confirm takes `staged` too (U3.2): a zero-presign completion still becomes uploaded."""
+    body = initiate(client).json()
+    parts = [{"partNumber": 1, "etag": fake_storage.put_part(body["uploadId"], 1)}]
+    assert complete(client, {**body, "parts": parts}).json()["status"] == "uploaded"
+    assert status_of(db_session, body) == "uploaded"
+
+
+def test_complete_with_redis_down_still_answers_uploaded(client: TestClient, db_session: Session,
+                                                         fake_storage: FakeStorage,  # noqa: F811
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    """The confirm service's R2.6 holds here too: the enqueue fails, the file is uploaded, reconcile recovers it."""
+    def down(*_: Any) -> None:
+        raise ConnectionError("Redis unreachable")
+
+    monkeypatch.setattr(tasks_client, "enqueue_process_upload", down)
+    body = upload(client, fake_storage)
+    response = complete(client, body)
+    assert response.status_code == 200 and response.json()["status"] == "uploaded"
+    assert status_of(db_session, body) == "uploaded"

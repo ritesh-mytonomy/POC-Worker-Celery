@@ -210,3 +210,46 @@ def list_uploads(db: Session) -> list[dict[str, Any]]:
     return [{"id": str(r["file_id"]), "filename": r["file_name"], "size_bytes": r["size_bytes"],
              "content_type": r["content_type"], "s3_key": r["s3_key"], "s3_location": None, "status": r["status"],
              "parent_id": None, "source_path": None, "created_at": r["created_at"]} for r in rows]
+
+
+@dataclass(frozen=True)
+class Completed:
+    """What complete returns: Anugrah's fields plus the batch."""
+
+    file_id: uuid.UUID
+    batch_id: uuid.UUID
+    key: str
+    location: str
+    status: str
+
+
+def complete(db: Session, *, key: str, upload_id: str, parts: list[dict[str, Any]]) -> Completed:
+    """Finish the S3 upload, then hand over exactly as the Ingest confirm does (U3, design.md §5.3).
+
+    No download, no hashing, no validation — the Worker does those (U3.3). Called again for a file already past
+    uploading, it returns the current status and enqueues nothing (U3.5). If S3 refuses the parts, or the upload
+    has expired, the file's status does not change, so the client can retry (U3.6).
+    """
+    if not parts:
+        raise UploadRefused(400, "parts must not be empty.")
+    row = files.find_by_upload(db, upload_id, key)
+    db.rollback()                        # read-only so far; confirm below runs its own transaction
+    if row is None:
+        raise UploadRefused(404, "Upload not found.")
+    location = f"s3://{get_settings().S3_BUCKET}/{row.s3_key}"   # stable; never the internal hostname
+    if row.status not in ("staged", "uploading"):
+        return Completed(row.file_id, row.batch_id, row.s3_key, location, row.status)
+    try:
+        _s3(storage.complete_multipart, row.s3_key, row.upload_id, parts)
+    except storage.NoSuchUpload as exc:
+        # An earlier complete may have assembled the object and died before confirm: carry on if it is there.
+        if not _s3(storage.exists, row.s3_key):
+            raise UploadRefused(400, "Upload session expired — start the upload again") from exc
+        log.info("complete_retry_after_s3_completion", file_id=str(row.file_id))
+    except storage.InvalidParts as exc:
+        raise UploadRefused(400, f"S3 error ({exc.code}): {exc}") from exc
+    result = confirm(db, row.file_id)    # the Ingest confirm: staged|uploading → uploaded, commit, THEN enqueue
+    status = result.status if result else row.status
+    log.info("upload_completed", file_id=str(row.file_id), batch_id=str(row.batch_id), status=status,
+             enqueued=bool(result and result.enqueued))
+    return Completed(row.file_id, row.batch_id, row.s3_key, location, status)

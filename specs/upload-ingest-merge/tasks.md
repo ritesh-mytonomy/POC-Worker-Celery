@@ -86,7 +86,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** contract tests pass; an aborted upload's `list_parts` fails; aborting a processed file changes nothing and returns `{"ok": true}`.
   - _Requirements: U4.1, U4.2_
 
-- [ ] **3.4 `complete` — the join point** — *plan mode*
+- [x] **3.4 `complete` — the join point** — *plan mode*
   - Per `design.md` §5.3: S3 completion, then the **existing** Ingest confirm service.
   - **Done when:**
     - contract tests pass; the response `status` is `uploaded` and it includes `batchId`
