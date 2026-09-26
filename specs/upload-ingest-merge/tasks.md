@@ -169,7 +169,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** rows move through the states in the browser, and **Add to library** adds the ready documents — and can be pressed again when more are ready.
   - _Requirements: U10.3, U10.4_
 
-- [ ] **6.4 The Library table** — `StoredUploadsTable` adapted, on the Content Library page (D18)
+- [x] **6.4 The Library table** — `StoredUploadsTable` adapted, on the Content Library page (D18)
   - **Done when:** added documents appear, newest first, and download opens the file. **Checkpoint M3:** the walkthrough in `design.md` §9.3 passes.
   - _Requirements: U9.3, U10.5_
 

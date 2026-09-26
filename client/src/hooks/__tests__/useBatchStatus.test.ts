@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '@/mocks/server';
@@ -45,5 +45,33 @@ describe('useBatchStatus', () => {
     );
     renderHook(() => useBatchStatus(['b1'], new Set(['b1']), 20));
     await waitFor(() => expect(polls).toBeGreaterThanOrEqual(4));
+  });
+
+  it('keeps a file\'s last known counts after a commit deletes its candidates', async () => {
+    vi.stubEnv('VITE_SCAN_API_URL', API);
+    vi.resetModules();
+    const { useBatchStatus } = await import('@/hooks/useBatchStatus');
+    const { mapServerStatus } = await import('@/utils/statusMapping');
+    const candidate = (i: number, status: 'processed' | 'rejected') => ({
+      staged_id: `s${i}`, source_file_id: 'zip', source_entry_name: `e${i}`, entry_index: i, file_name: `e${i}`,
+      status, reject_reason: status === 'rejected' ? 'bad' : null, content_hash: null, duplicate_of: null,
+    });
+    let committed = false;
+    server.use(
+      http.get(`${API}/api/v1/uploads/batches/b1`, () =>
+        HttpResponse.json({ batch_id: 'b1', files: [], ready_to_add: committed ? 0 : 3,
+                            pending_review: committed ? 0 : 5, in_progress: 0 })),
+      http.get(`${API}/api/v1/uploads/batches/b1/staged`, () => HttpResponse.json({ batch_id: 'b1', staged: committed
+        ? [] : [0, 1, 2].map((i) => candidate(i, 'processed')).concat([3, 4].map((i) => candidate(i, 'rejected'))) })),
+    );
+    const { result } = renderHook(() => useBatchStatus(['b1'], new Set<string>(), 20));
+    await waitFor(() => expect(result.current.batches.b1?.counts.zip).toEqual({ processed: 3, total: 5 }));
+
+    committed = true;
+    await act(() => result.current.refresh('b1'));
+    expect(result.current.batches.b1.staged).toEqual([]);
+    expect(result.current.batches.b1.counts.zip).toEqual({ processed: 3, total: 5 });
+    const file = { status: 'partial', status_message: null, entries_total: 5, entries_done: 5 };
+    expect(mapServerStatus(file, result.current.batches.b1.counts.zip)?.label).toBe('Partly ready — 3 of 5');
   });
 });

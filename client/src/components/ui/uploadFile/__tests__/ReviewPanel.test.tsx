@@ -17,7 +17,7 @@ const candidate = (id: string, fileId: string, name: string, extra: Partial<Stag
 
 const view = (counts: { ready_to_add: number; pending_review: number; in_progress: number },
               files: BatchFile[], staged: StagedCandidate[]): BatchView => ({
-  batch: { batch_id: 'b1', files, ...counts }, staged,
+  batch: { batch_id: 'b1', files, ...counts }, staged, counts: {},
 });
 
 describe('ReviewPanel', () => {

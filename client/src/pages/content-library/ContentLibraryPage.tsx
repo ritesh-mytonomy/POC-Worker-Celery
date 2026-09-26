@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PageHeader from '@/components/layout/PageHeader';
 import Button from '@/components/ui/Button';
 import UploadDropzone from '@/components/ui/uploadFile/UploadDropzone';
@@ -22,7 +22,8 @@ import { commitBatch } from '@/utils/reviewApi';
 import { mapServerStatus, type StatusLabel } from '@/utils/statusMapping';
 import type { UploadConfig } from '@/utils/uploadConfig';
 import { canStartCloudUpload, isBlockedFromUpload, useUploadQueue } from '@/context/UploadQueueContext';
-import { checkDuplicateUpload } from '@/utils/uploadsApi';
+import { checkDuplicateUpload, fetchLibraryDocuments, getDownloadUrl, type LibraryDocument } from '@/utils/uploadsApi';
+import StoredUploadsTable from '@/components/ui/uploadFile/StoredUploadsTable';
 import type { UploadQueueItem } from '@/types/contentLibrary';
 import { UploadIcon } from '@/components/ui/icons';
 
@@ -72,17 +73,43 @@ const ContentLibraryPage = () => {
       const view = item.cloudUpload?.batchId ? batches[item.cloudUpload.batchId] : undefined;
       const file = view?.batch.files.find((f) => f.file_id === item.cloudUpload?.fileId);
       if (!view || !file) continue;
-      const own = view.staged.filter((c) => c.source_file_id === file.file_id);
-      statuses[item.id] = mapServerStatus(file, own.length
-        ? { processed: own.filter((c) => c.status === 'processed').length, total: own.length }
-        : undefined);
+      statuses[item.id] = mapServerStatus(file, view.counts[file.file_id]);
     }
     return statuses;
   }, [items, batches]);
 
+  // The Library table (upload-ingest-merge U9.3): loaded on arrival, and again after every commit (version + 1).
+  const [library, setLibrary] = useState<LibraryDocument[] | null>(null);
+  const [libraryError, setLibraryError] = useState<string | undefined>();
+  const [libraryVersion, setLibraryVersion] = useState(0);
+  useEffect(() => {
+    let active = true;
+    fetchLibraryDocuments()
+      .then((documents) => {
+        if (!active) return;
+        setLibrary(documents);
+        setLibraryError(undefined);
+      })
+      .catch((err: unknown) => {
+        if (active) setLibraryError(err instanceof Error ? err.message : 'Failed to load the library.');
+      });
+    return () => {
+      active = false;
+    };
+  }, [libraryVersion]);
+
+  const download = async (documentId: string) => {
+    try {
+      window.location.assign(await getDownloadUrl(documentId)); // Content-Disposition: attachment — stays here
+    } catch (err) {
+      setLibraryError(err instanceof Error ? err.message : 'Failed to prepare the download.');
+    }
+  };
+
   const addToLibrary = async (batchId: string) => {
     const result = await commitBatch(batchId);
     await refresh(batchId);
+    setLibraryVersion((version) => version + 1);
     return result;
   };
 
@@ -242,13 +269,6 @@ const ContentLibraryPage = () => {
           </div>
         )}
 
-        {[...batchIds].reverse().map(
-          (batchId) =>
-            batches[batchId] && (
-              <ReviewPanel key={batchId} view={batches[batchId]} onCommit={() => addToLibrary(batchId)} />
-            ),
-        )}
-
         <div className="flex items-center justify-between pt-md">
           <button
             type="button"
@@ -267,6 +287,22 @@ const ContentLibraryPage = () => {
             <UploadIcon className="h-4 w-4" />
             {isCheckingFiles ? 'Checking…' : isUploading ? 'Uploading…' : 'Upload'}
           </Button>
+        </div>
+
+        {[...batchIds].reverse().map(
+          (batchId) =>
+            batches[batchId] && (
+              <ReviewPanel key={batchId} view={batches[batchId]} onCommit={() => addToLibrary(batchId)} />
+            ),
+        )}
+
+        <div className="rounded-lg border border-border bg-background p-lg">
+          <StoredUploadsTable
+            documents={library ?? []}
+            isLoading={library === null && !libraryError}
+            error={libraryError}
+            onDownload={(id) => void download(id)}
+          />
         </div>
       </div>
     </div>

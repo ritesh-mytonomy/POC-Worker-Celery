@@ -1,26 +1,32 @@
 const API_BASE = import.meta.env.VITE_SCAN_API_URL;
 
-export interface StoredUpload {
-  id: string;
-  filename: string;
+/** A document in the library — GET /api/v1/library/documents (upload-ingest-merge U9). */
+export interface LibraryDocument {
+  document_id: string;
+  title: string;
+  file_name: string;
+  file_ext: string;
   size_bytes: number;
-  content_type: string | null;
-  s3_key: string;
-  s3_location: string | null;
-  status: string;
-  parent_id: string | null;
-  source_path: string | null;
   created_at: string;
 }
 
-export async function fetchStoredUploads(): Promise<StoredUpload[]> {
+export async function fetchLibraryDocuments(): Promise<LibraryDocument[]> {
   if (!API_BASE) return [];
 
-  const response = await fetch(`${API_BASE}/api/uploads`);
+  const response = await fetch(`${API_BASE}/api/v1/library/documents`);
   if (!response.ok) {
-    throw new Error(`Failed to load uploads (HTTP ${response.status}).`);
+    throw new Error(`Failed to load the library (HTTP ${response.status}).`);
   }
-  return response.json() as Promise<StoredUpload[]>;
+  return ((await response.json()) as { documents: LibraryDocument[] }).documents;
+}
+
+/** A short-lived presigned download URL that saves the document under its file name. */
+export async function getDownloadUrl(documentId: string): Promise<string> {
+  const response = await fetch(`${API_BASE}/api/v1/library/documents/${documentId}/download`);
+  if (!response.ok) {
+    throw new Error(`Failed to prepare the download (HTTP ${response.status}).`);
+  }
+  return ((await response.json()) as { url: string }).url;
 }
 
 export interface DuplicateCheckResult {

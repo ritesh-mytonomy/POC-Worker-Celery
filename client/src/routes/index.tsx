@@ -1,19 +1,9 @@
-import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { publicRoutes } from '@/routes/public.routes';
 import { privateRoutes } from '@/routes/private.routes';
 
-const devPlaygroundRoutes: RouteObject[] = import.meta.env.DEV
-  ? [
-      {
-        path: '/playground',
-        lazy: () =>
-          import('@/playground').then((module) => ({
-            Component: module.Playground,
-          })),
-      },
-    ]
-  : [];
-
+// The dev-only /playground route is removed: src/playground/ is git-ignored in the Upload POC, so from a clean
+// checkout Vite could not resolve it and served a blank page (upload-ingest-merge 6.4).
 export const router = createBrowserRouter([
   {
     path: '/',
@@ -21,7 +11,6 @@ export const router = createBrowserRouter([
   },
   ...publicRoutes,
   ...privateRoutes,
-  ...devPlaygroundRoutes,
   {
     path: '*',
     element: <Navigate to="/dashboard" replace />,

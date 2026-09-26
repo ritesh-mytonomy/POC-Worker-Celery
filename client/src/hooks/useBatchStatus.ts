@@ -1,9 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchBatch, fetchStaged, type BatchStatus, type StagedCandidate } from '@/utils/reviewApi';
+import type { FileCandidateCounts } from '@/utils/statusMapping';
 
 export interface BatchView {
   batch: BatchStatus;
   staged: StagedCandidate[];
+  /** Per file: its candidates staged (processed) out of all — the last known counts, kept after a commit deletes
+   *  the candidates, so a row still reads "Partly ready — 3 of 5". */
+  counts: Record<string, FileCandidateCounts>;
+}
+
+/** Counts per source file from this staged list, carried forward from `previous` for files it no longer lists. */
+export function carryCounts(
+  staged: StagedCandidate[],
+  previous: Record<string, FileCandidateCounts> = {},
+): Record<string, FileCandidateCounts> {
+  const fresh: Record<string, FileCandidateCounts> = {};
+  for (const c of staged) {
+    const counts = (fresh[c.source_file_id] ??= { processed: 0, total: 0 });
+    counts.total += 1;
+    if (c.status === 'processed') counts.processed += 1;
+  }
+  return { ...previous, ...fresh };
 }
 
 export const POLL_MS = 2000;
@@ -27,7 +45,10 @@ export const useBatchStatus = (
   const refresh = useCallback(async (batchId: string) => {
     try {
       const [batch, staged] = await Promise.all([fetchBatch(batchId), fetchStaged(batchId)]);
-      setBatches((prev) => ({ ...prev, [batchId]: { batch, staged } }));
+      setBatches((prev) => ({
+        ...prev,
+        [batchId]: { batch, staged, counts: carryCounts(staged, prev[batchId]?.counts) },
+      }));
     } catch {
       // a missed poll is retried on the next tick
     }
