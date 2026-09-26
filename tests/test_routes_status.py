@@ -14,6 +14,8 @@ from app.repositories.candidates import upsert
 from app.repositories.files import progress
 from tests.db_helpers import claimed, make_file
 
+HASH = "ab" * 32                         # a content_hash: 64 lowercase hex (U5.2)
+
 FILE_KEYS = {"file_id", "file_name", "status", "entries_total", "entries_done", "attempt_count",
              "detected_type", "status_message"}
 STAGED_KEYS = {"staged_id", "source_file_id", "source_entry_name", "entry_index", "file_name", "status",
@@ -74,14 +76,14 @@ def test_staged_returns_every_candidate_with_r14_fields(client: TestClient, db_s
     upsert(db_session, archive, token, source_entry_name="b.pdf", entry_index=1, file_name="b.pdf",
            file_ext="pdf", status="rejected", reject_reason=".pdf is not supported")
     upsert(db_session, archive, token, source_entry_name="a.docx", entry_index=0, file_name="a.docx",
-           file_ext="docx", status="processed", s3_key="ClinSync/staging/k", size_bytes=5)
+           file_ext="docx", status="processed", s3_key="ClinSync/staging/k", size_bytes=5, content_hash=HASH)
     direct, direct_token = claimed(db_session)
     upsert(db_session, direct, direct_token, source_entry_name=None, entry_index=None, file_name="valid.docx",
-           file_ext="docx", status="processed", s3_key="ClinSync/staging/d", size_bytes=7)
+           file_ext="docx", status="processed", s3_key="ClinSync/staging/d", size_bytes=7, content_hash=HASH)
     move_to_batch(db_session, direct, batch_id)
     other, other_token = claimed(db_session)                # another batch: must not appear
     upsert(db_session, other, other_token, source_entry_name=None, entry_index=None, file_name="x.docx",
-           file_ext="docx", status="processed", s3_key="ClinSync/staging/x", size_bytes=1)
+           file_ext="docx", status="processed", s3_key="ClinSync/staging/x", size_bytes=1, content_hash=HASH)
 
     response = client.get(f"/api/v1/uploads/batches/{batch_id}/staged")
     assert response.status_code == 200

@@ -22,25 +22,27 @@ FOR UPDATE
 _UPSERT_SQL = text("""
 INSERT INTO staged_document
   (batch_id, organization_id, source_file_id, source_entry_name, entry_index,
-   file_name, file_ext, size_bytes, s3_key, status, reject_reason)
+   file_name, file_ext, size_bytes, content_hash, s3_key, status, reject_reason)
 VALUES
   (:batch_id, :organization_id, :file_id, :source_entry_name, :entry_index,
-   :file_name, :file_ext, :size_bytes, :s3_key, :status, :reject_reason)
+   :file_name, :file_ext, :size_bytes, :content_hash, :s3_key, :status, :reject_reason)
 ON CONFLICT ON CONSTRAINT uq_entry DO UPDATE
 SET status = EXCLUDED.status, s3_key = EXCLUDED.s3_key,
     reject_reason = EXCLUDED.reject_reason, size_bytes = EXCLUDED.size_bytes,
-    updated_at = now()
+    content_hash = EXCLUDED.content_hash, updated_at = now()
 RETURNING staged_id, entry_index, file_name, file_ext
 """)
 
 
 def _validate(status: str, s3_key: str | None, reject_reason: str | None,
-              source_entry_name: str | None, entry_index: int | None) -> None:
+              source_entry_name: str | None, entry_index: int | None, content_hash: str | None) -> None:
     """Raise InvalidInput for a candidate the schema would accept but that makes no sense."""
     if status not in CANDIDATE_STATUSES:
         raise InvalidInput(f"candidate status must be processed or rejected, got {status!r}")
     if status == "processed" and (not s3_key or reject_reason):
         raise InvalidInput("a processed candidate needs an s3_key and no reject_reason")
+    if status == "processed" and not content_hash:          # documents.content_hash is NOT NULL (U5.2)
+        raise InvalidInput("a processed candidate needs its content_hash")
     if status == "rejected" and (s3_key or not reject_reason):
         raise InvalidInput("a rejected candidate needs a reject_reason and no s3_key")
     if (source_entry_name is None) != (entry_index is None):
@@ -49,13 +51,14 @@ def _validate(status: str, s3_key: str | None, reject_reason: str | None,
 
 def upsert(session: Session, file_id: uuid.UUID, token: uuid.UUID, *, source_entry_name: str | None,
            entry_index: int | None, file_name: str, file_ext: str, status: str, size_bytes: int | None = None,
-           s3_key: str | None = None, reject_reason: str | None = None) -> uuid.UUID:
+           s3_key: str | None = None, reject_reason: str | None = None,
+           content_hash: str | None = None) -> uuid.UUID:
     """Insert or overwrite the file's candidate for this entry, fenced on the claim token; return staged_id.
 
     batch_id and organization_id are taken from the locked parent row, never from the caller. An overwrite
     whose entry_index, file_name or file_ext differs from the stored row raises CandidateIdentityMismatch.
     """
-    _validate(status, s3_key, reject_reason, source_entry_name, entry_index)
+    _validate(status, s3_key, reject_reason, source_entry_name, entry_index, content_hash)
     parent = session.execute(_LOCK_PARENT_SQL, {"file_id": file_id, "token": token}).one_or_none()
     if parent is None:
         session.rollback()
@@ -63,7 +66,8 @@ def upsert(session: Session, file_id: uuid.UUID, token: uuid.UUID, *, source_ent
     stored = session.execute(_UPSERT_SQL, {
         "batch_id": parent.batch_id, "organization_id": parent.organization_id, "file_id": file_id,
         "source_entry_name": source_entry_name, "entry_index": entry_index, "file_name": file_name,
-        "file_ext": file_ext, "size_bytes": size_bytes, "s3_key": s3_key, "status": status,
+        "file_ext": file_ext, "size_bytes": size_bytes, "content_hash": content_hash, "s3_key": s3_key,
+        "status": status,
         "reject_reason": truncate_message(reject_reason),
     }).one()
     # A replay must reproduce the identity columns exactly (they are not overwritten on conflict);

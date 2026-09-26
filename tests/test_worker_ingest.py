@@ -1,4 +1,5 @@
 """process_upload and process_document (design.md §8.1, §8.2; R3.4, R5, R10.2, R10.3) against fakes — no services."""
+import hashlib
 import logging
 import shutil
 import threading
@@ -88,13 +89,15 @@ class FakeStore:
         self.rec, self.source, self.error = rec, source, error
         self.downloaded: list[Path] = []
 
-    def download_to_tmp(self, key: str, tmp_dir: Path | None = None) -> Path:
-        """Record, then copy the fixture to a temp file (or raise)."""
+    def download_to_tmp(self, key: str, tmp_dir: Path | None = None, digest: Any = None) -> Path:
+        """Record, then copy the fixture to a temp file (or raise), feeding digest as the real one does."""
         self.rec.calls.append(("download", key))
         if self.error is not None:
             raise self.error
         assert self.source is not None
         out = Path(shutil.copy(self.source, self.source.parent / f"dl-{uuid.uuid4().hex}"))
+        if digest is not None:
+            digest.update(out.read_bytes())
         self.downloaded.append(out)
         return out
 
@@ -165,7 +168,8 @@ def test_valid_docx_is_staged_then_finished_then_incoming_deleted(ingest: Any, m
     candidate = work[5][1]
     assert candidate == {"entry_name": None, "entry_index": None, "file_name": "valid.docx", "file_ext": "docx",
                          "size_bytes": (fixtures_dir / "valid.docx").stat().st_size, "s3_key": key,
-                         "status": "processed"}
+                         "status": "processed",
+                         "content_hash": hashlib.sha256((fixtures_dir / "valid.docx").read_bytes()).hexdigest()}
     assert finals(rec) == [FinalStatus("processed")] and work[7] == ("delete", claim.s3_key)
     assert all(not p.exists() for p in store.downloaded)                  # temp download removed
 

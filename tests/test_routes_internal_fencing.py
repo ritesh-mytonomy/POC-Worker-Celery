@@ -15,9 +15,12 @@ from app.main import app
 from app.repositories import files as files_repo
 from tests.db_helpers import MAX_ATTEMPTS, STALE, claimed, make_file, set_heartbeat_age
 
+HASH = "ab" * 32                         # a content_hash: 64 lowercase hex (U5.2)
+
 KEY = {"X-Internal-Key": get_settings().INTERNAL_API_KEY}
 CANDIDATE = {"source_entry_name": "docs/a.docx", "entry_index": 0, "file_name": "a.docx", "file_ext": "docx",
-             "status": "processed", "s3_key": "ClinSync/staging/k", "size_bytes": 10}
+             "status": "processed", "s3_key": "ClinSync/staging/k", "size_bytes": 10,
+             "content_hash": HASH}
 
 # Every write route: method, path suffix, a valid body, the success status.
 WRITES: dict[str, tuple[str, str, dict[str, Any] | None, int]] = {
@@ -204,3 +207,35 @@ def test_claim_route_calls_claim_first_in_fresh_session_with_settings(
     assert seen["in_transaction"] is False
     assert seen["limits"] == {"max_attempts": settings.MAX_ATTEMPTS,
                               "stale_after_seconds": settings.STALE_AFTER_SECONDS}
+
+
+
+# --- content_hash on candidates (upload-ingest-merge U5.2) ---
+
+@pytest.mark.parametrize("bad", ["AB" * 32, "ab" * 31 + "a", "zz" * 32, "ab" * 33, ""])
+def test_candidate_content_hash_must_be_64_lowercase_hex(client: TestClient, db_session: Session, bad: str) -> None:
+    """Anything but 64 lowercase hex characters → 400 validation_error; nothing stored."""
+    file_id, token = claimed(db_session)
+    response = call(client, "candidates", file_id, str(token), {**CANDIDATE, "content_hash": bad})
+    assert response.status_code == 400 and response.json()["error"]["code"] == "validation_error"
+    assert db_session.execute(text("SELECT count(*) FROM staged_document WHERE source_file_id = :id"),
+                              {"id": file_id}).scalar() == 0
+
+
+def test_candidate_content_hash_is_stored_and_overwritten(client: TestClient, db_session: Session) -> None:
+    """A valid hash is stored; a replay of the same entry overwrites it, like size_bytes."""
+    file_id, token = claimed(db_session)
+    for digest in ("ab" * 32, "cd" * 32):
+        assert call(client, "candidates", file_id, str(token), {**CANDIDATE, "content_hash": digest}).status_code == 200
+    assert db_session.execute(text("SELECT content_hash FROM staged_document WHERE source_file_id = :id"),
+                              {"id": file_id}).scalar_one() == "cd" * 32
+
+
+def test_processed_candidate_needs_a_hash_rejected_does_not(client: TestClient, db_session: Session) -> None:
+    """processed without content_hash → 400 (documents.content_hash is NOT NULL); a rejected entry needs none."""
+    file_id, token = claimed(db_session)
+    missing = {k: v for k, v in CANDIDATE.items() if k != "content_hash"}
+    assert call(client, "candidates", file_id, str(token), missing).status_code == 400
+    rejected = {"source_entry_name": "x.pdf", "entry_index": 1, "file_name": "x.pdf", "file_ext": "pdf",
+                "status": "rejected", "reject_reason": ".pdf is not supported"}
+    assert call(client, "candidates", file_id, str(token), rejected).status_code == 200

@@ -1,5 +1,6 @@
 """Tests for engine/file_checks.py: detection (design.md §8.4; R5.1, R5.2, R5.5), archive guards (§8.5; R6.1–R6.6,
 R6.9, R6.10) and streaming extraction (R6.7, R6.8, NFR-4). No services, no settings."""
+import hashlib
 import io
 import shutil
 import struct
@@ -453,3 +454,18 @@ def test_200_mb_entry_extracts_in_under_64_mb_of_memory(fixtures_dir: Path, tmp_
     assert out.stat().st_size == 200 * 1024 * 1024
     assert peak < 64 * 1024 * 1024, f"peak {peak / 1024 / 1024:.1f} MB"
     print(f"peak traced memory: {peak / 1024 / 1024:.2f} MB")
+
+
+def test_extraction_hashes_the_entry_as_it_writes_it(fixtures_dir: Path, tmp_path: Path,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """U5.2: the digest is fed each block while extracting; the entry is opened exactly once."""
+    with zipfile.ZipFile(fixtures_dir / "mixed.zip") as zf:
+        info = zf.getinfo("doc1.docx")
+        expected = hashlib.sha256(zf.read(info)).hexdigest()
+        opens: list[str] = []
+        real_open = zf.open
+        monkeypatch.setattr(zf, "open", lambda e, *a, **k: opens.append(e.filename) or real_open(e, *a, **k))
+        digest = hashlib.sha256()
+        out = extract_streaming(zf, info, tmp_dir=tmp_path, digest=digest)
+    assert digest.hexdigest() == expected == hashlib.sha256(out.read_bytes()).hexdigest()
+    assert opens == ["doc1.docx"]

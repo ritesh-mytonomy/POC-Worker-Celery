@@ -108,7 +108,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
 
 ## Phase 4 · Worker and engine
 
-- [ ] **4.1 Hashing** — per `design.md` §6
+- [x] **4.1 Hashing** — per `design.md` §6
   - **Done when:** each candidate's hash equals `sha256` of its bytes, with no second read; the engine purity test still passes.
   - _Requirements: U5.2_
 

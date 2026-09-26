@@ -4,6 +4,7 @@ Sections, in order: Celery app and config · Heartbeat · process_upload / proce
 sweeper tasks. Task names are set explicitly and never change (the §6.3 message contract); each section keeps its
 original logger name so log output is identical. Workers never open a database connection (R4.1).
 """
+import hashlib
 import os
 import threading
 import time
@@ -188,8 +189,12 @@ def staging_key(claim: FileClaim, index: int, name: str) -> str:
     return f"{staging_prefix(claim)}{index:04d}_{name}"
 
 
-def process_document(api: BoundClient, claim: FileClaim, path: Path, limits: Limits, store: S3Store) -> FinalStatus:
-    """Verify a single document by content and stage it (R5.1–R5.4); raise Rejected on a mismatch."""
+def process_document(api: BoundClient, claim: FileClaim, path: Path, limits: Limits, store: S3Store,
+                     content_hash: str) -> FinalStatus:
+    """Verify a single document by content and stage it (R5.1–R5.4); raise Rejected on a mismatch.
+
+    content_hash is the SHA-256 taken while downloading (U5.2); the staged copy is the same bytes.
+    """
     d = detect_file_type(path, limits)                           # R5.1
     api.progress(detected_type=d.type)
     if d.type != claim.file_ext:                                 # R5.3
@@ -198,7 +203,7 @@ def process_document(api: BoundClient, claim: FileClaim, path: Path, limits: Lim
     store.copy(claim.s3_key, key)                                # server-side copy
     api.upsert_candidate(entry_name=None, entry_index=None, file_name=claim.file_name,
                          file_ext=claim.file_ext, size_bytes=path.stat().st_size,
-                         s3_key=key, status="processed")        # R5.4
+                         s3_key=key, status="processed", content_hash=content_hash)   # R5.4, U5.2
     log.info("staged", file_id=str(claim.file_id), attempt=claim.attempt_count, s3_key=key)
     return FinalStatus("processed")
 
@@ -226,7 +231,8 @@ def _process_entry(api: BoundClient, claim: FileClaim, zf: zipfile.ZipFile, e: z
         return reject("Files without an extension are not supported")
     if ext not in limits.allowed_entry_ext:                               # R7.2 — not stored
         return reject(f".{ext} is not supported")
-    tmp = extract_streaming(zf, e)                                        # R6.7, R6.8 — outer CRC → archive-level
+    digest = hashlib.sha256()                                             # U5.2 — hashed while extracting
+    tmp = extract_streaming(zf, e, digest=digest)                         # R6.7, R6.8 — outer CRC → archive-level
     try:
         d = detect_file_type(tmp, limits)                                 # inner problems → entry-level
         if d.type != ext:                                                 # R7.3 — not stored
@@ -234,7 +240,8 @@ def _process_entry(api: BoundClient, claim: FileClaim, zf: zipfile.ZipFile, e: z
         key = staging_key(claim, index=i, name=name)
         store.upload(tmp, key)
         api.upsert_candidate(entry_name=e.filename, entry_index=i, file_name=name, file_ext=ext,
-                             size_bytes=e.file_size, s3_key=key, status="processed")   # R7.4
+                             size_bytes=e.file_size, s3_key=key, status="processed",
+                             content_hash=digest.hexdigest())                          # R7.4, U5.2
         log.info("entry_staged", file_id=str(claim.file_id), attempt=claim.attempt_count, entry_index=i,
                  entry=e.filename, s3_key=key)
         return False
@@ -292,12 +299,13 @@ def process_upload(self: Any, file_id: str, organization_id: str) -> None:
     beat = Heartbeat(api, every=settings.HEARTBEAT_SECONDS).start()           # R10.1
     local: Path | None = None
     try:
-        local = store.download_to_tmp(claim.s3_key)                           # heartbeat keeps running
+        digest = hashlib.sha256()                                             # U5.2 — hashed while downloading
+        local = store.download_to_tmp(claim.s3_key, digest=digest)            # heartbeat keeps running
         beat.raise_if_superseded()
         if claim.is_archive:
             final = process_archive(api, claim, local, beat, LIMITS, store)
         else:
-            final = process_document(api, claim, local, LIMITS, store)
+            final = process_document(api, claim, local, LIMITS, store, digest.hexdigest())
         api.finish(final)                                                     # R10.3
         store.delete_quietly(claim.s3_key)                                    # R10.2 — lifecycle rule is the backstop
         log.info("finished", **ctx, status=final.status)

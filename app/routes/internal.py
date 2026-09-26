@@ -40,6 +40,7 @@ class CandidateIn(_Body):
     size_bytes: int | None = Field(default=None, ge=0)
     s3_key: str | None = Field(default=None, max_length=1024)
     reject_reason: str | None = None
+    content_hash: str | None = Field(default=None, pattern="^[0-9a-f]{64}$")     # SHA-256, lowercase hex (U5.2)
 
 
 class FinishIn(_Body):

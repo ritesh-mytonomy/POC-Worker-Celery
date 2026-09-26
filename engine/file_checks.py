@@ -154,9 +154,10 @@ def tmp_path(tmp_dir: Path | None = None) -> Path:
 
 
 def extract_streaming(zf: zipfile.ZipFile, e: zipfile.ZipInfo, chunk: int = CHUNK,
-                      tmp_dir: Path | None = None) -> Path:
+                      tmp_dir: Path | None = None, digest: Any = None) -> Path:
     """Extract one entry; an entry whose bytes disagree with its index is rejected (R6.7, R6.8).
 
+    `digest` (a hashlib object) is fed each block as it is written — the entry's hash with no second read (U5.2).
     Never leaves a partial temp file behind: every failure path deletes it.
     """
     out, total = tmp_path(tmp_dir), 0
@@ -167,6 +168,8 @@ def extract_streaming(zf: zipfile.ZipFile, e: zipfile.ZipInfo, chunk: int = CHUN
                 if total > e.file_size:          # defence in depth — CPython already truncates
                     raise Rejected(f"'{e.filename}' is larger than its index claims")
                 dst.write(block)
+                if digest is not None:
+                    digest.update(block)
     except UNREADABLE as exc:                    # R6.8 — how a lying index actually surfaces (Bad CRC-32)
         out.unlink(missing_ok=True)
         raise Rejected(f"'{e.filename}' does not match its index ({exc or type(exc).__name__})") from exc

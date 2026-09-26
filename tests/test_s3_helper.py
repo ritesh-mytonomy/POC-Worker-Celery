@@ -1,4 +1,5 @@
 """workers/s3.py: every S3 failure maps to the right worker outcome (task 8.1), plus a LocalStack round trip."""
+import hashlib
 import io
 import logging
 import os
@@ -236,3 +237,14 @@ def test_delete_prefix_error_mapping(tmp_path: Path) -> None:
         stub.add_client_error("list_objects_v2", service_error_code=code, http_status_code=status)
         with stub, pytest.raises(expected):
             store.delete_prefix("ClinSync/staging/x/")
+
+
+def test_download_hashes_the_bytes_as_it_writes_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """U5.2: the digest passed in is fed every block during the one download — no second read of the file."""
+    store, _ = stubbed()
+    body, gets = Body(os.urandom(300 * 1024)), []
+    monkeypatch.setattr(store.client, "get_object", lambda **kw: gets.append(kw) or {"Body": body})
+    digest = hashlib.sha256()
+    out = store.download_to_tmp("k", tmp_dir=tmp_path, digest=digest)
+    assert digest.hexdigest() == hashlib.sha256(body.data).hexdigest() == hashlib.sha256(out.read_bytes()).hexdigest()
+    assert len(gets) == 1 and body.sizes == [CHUNK]                        # one GET, read once in 64 KB chunks

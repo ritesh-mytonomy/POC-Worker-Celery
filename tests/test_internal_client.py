@@ -48,7 +48,8 @@ WRITES: dict[str, Callable[[BoundClient], Any]] = {
     "heartbeat": lambda b: b.heartbeat(),
     "progress": lambda b: b.progress(entries_done=3),
     "candidates": lambda b: b.upsert_candidate(entry_name="a.docx", entry_index=0, file_name="a.docx",
-                                               file_ext="docx", status="processed", s3_key="k", size_bytes=1),
+                                               file_ext="docx", status="processed", s3_key="k", size_bytes=1,
+                                               content_hash="ab" * 32),
     "finish": lambda b: b.finish(FinalStatus("processed")),
     "release": lambda b: b.release("S3 unavailable"),
 }
@@ -167,7 +168,7 @@ def test_bodies() -> None:
     assert bodies["progress"] == {"entries_total": 30}
     assert bodies["candidates"] == {"source_entry_name": "d/a.pdf", "entry_index": 4, "file_name": "a.pdf",
                                     "file_ext": "pdf", "status": "rejected", "size_bytes": None, "s3_key": None,
-                                    "reject_reason": ".pdf is not supported"}
+                                    "reject_reason": ".pdf is not supported", "content_hash": None}
     assert bodies["finish"] == {"status": "error", "status_message": "Could not be processed"}
     assert bodies["release"] == {"reason": "S3 unavailable"}
 

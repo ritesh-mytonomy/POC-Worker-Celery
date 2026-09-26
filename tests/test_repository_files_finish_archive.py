@@ -17,6 +17,8 @@ from app.repositories.candidates import upsert
 from app.repositories.files import claim, finish, progress
 from tests.db_helpers import MAX_ATTEMPTS, STALE, full_row, make_file, triggers_off
 
+HASH = "ab" * 32                         # a content_hash: 64 lowercase hex (U5.2)
+
 
 def claimed_archive(db: Session, entries_total: int | None) -> tuple[uuid.UUID, uuid.UUID]:
     """A claimed .zip file with entries_total recorded (or not)."""
@@ -37,7 +39,7 @@ def add(db: Session, file_id: uuid.UUID, token: uuid.UUID, i: int, rejected: boo
                file_ext="pdf", status="rejected", reject_reason=".pdf is not supported")
     else:
         upsert(db, file_id, token, source_entry_name=f"e{i}.docx", entry_index=i, file_name=f"e{i}.docx",
-               file_ext="docx", status="processed", s3_key=f"k{i}", size_bytes=1)
+               file_ext="docx", status="processed", s3_key=f"k{i}", size_bytes=1, content_hash=HASH)
 
 
 def test_processed_becomes_partial_when_any_candidate_is_rejected(db_session: Session) -> None:
@@ -103,7 +105,7 @@ def test_single_document_needs_no_entries_total(db_session: Session) -> None:
     file_id = make_file(db_session)
     token = claim(db_session, file_id, max_attempts=MAX_ATTEMPTS, stale_after_seconds=STALE).claim_token
     upsert(db_session, file_id, token, source_entry_name=None, entry_index=None, file_name="a.docx",
-           file_ext="docx", status="processed", s3_key="k", size_bytes=1)
+           file_ext="docx", status="processed", s3_key="k", size_bytes=1, content_hash=HASH)
     assert finish(db_session, file_id, token, "processed") == "processed"
 
 
@@ -188,7 +190,7 @@ def test_rejected_single_document_touches_no_candidates(db_session: Session) -> 
     file_id = make_file(db_session)
     token = claim(db_session, file_id, max_attempts=MAX_ATTEMPTS, stale_after_seconds=STALE).claim_token
     upsert(db_session, file_id, token, source_entry_name=None, entry_index=None, file_name="a.docx",
-           file_ext="docx", status="processed", s3_key="k", size_bytes=1)
+           file_ext="docx", status="processed", s3_key="k", size_bytes=1, content_hash=HASH)
     before = candidate_rows(db_session, file_id)
     finish(db_session, file_id, token, "rejected", "odd, but possible in principle")
     assert candidate_rows(db_session, file_id) == before

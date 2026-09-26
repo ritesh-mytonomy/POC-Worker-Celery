@@ -1,5 +1,6 @@
 """process_archive (design.md §8.3; R7, R8.1, R8.2): the loop, archive- vs entry-level failures, and every crash
 window of the §8.3 table — crash at the exact point, run again, check nothing is duplicated, orphaned or wrong."""
+import hashlib
 import uuid
 import zipfile
 from collections.abc import Iterator
@@ -162,6 +163,9 @@ def assert_final_state(api: StatefulApi, store: MemoryStore, expected: dict[str,
         assert got.get("s3_key") == want.get("s3_key") and got.get("reject_reason") == want.get("reject_reason"), name
     processed_keys = {c["s3_key"] for c in api.candidates.values() if c["status"] == "processed"}
     assert set(store.objects) == processed_keys, "no orphaned or missing staging objects"
+    hashes = {c.get("content_hash") for c in api.candidates.values() if c["status"] == "processed"}
+    assert hashes == {hashlib.sha256(docs["docx"]).hexdigest()}, "each staged entry carries its bytes' SHA-256"
+    assert all(c.get("content_hash") is None for c in api.candidates.values() if c["status"] == "rejected")
     assert all(store.objects[k] == docs["docx"] for k in processed_keys)
     assert api.entries_total == 6 and api.entries_done == 6
     assert api.finish(final) == "partial", "the API decides partial from the candidates, even after a resume"
@@ -397,7 +401,7 @@ def test_real_heartbeat_409_stops_process_upload_without_finishing(ingest: Any, 
             return bound
 
     class Store(MemoryStore):
-        def download_to_tmp(self, key: str, tmp_dir: Path | None = None) -> Path:
+        def download_to_tmp(self, key: str, tmp_dir: Path | None = None, digest: Any = None) -> Path:
             return Path(__import__("shutil").copy(fixtures_dir / "big30.zip", tmp_path / "dl.zip"))
 
         def delete_quietly(self, key: str) -> None:

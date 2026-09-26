@@ -13,9 +13,11 @@ from app.repositories.candidates import upsert
 from app.repositories.files import _CLAIM_SQL, claim, finish, release
 from tests.db_helpers import MAX_ATTEMPTS, STALE, claimed, set_heartbeat_age, triggers_off
 
+HASH = "ab" * 32                         # a content_hash: 64 lowercase hex (U5.2)
+
 ENTRY = {"source_entry_name": "docs/a.docx", "entry_index": 3, "file_name": "a.docx", "file_ext": "docx"}
 DIRECT = {"source_entry_name": None, "entry_index": None, "file_name": "valid.docx", "file_ext": "docx"}
-PROCESSED = {"status": "processed", "s3_key": "ClinSync/staging/k1", "size_bytes": 100}
+PROCESSED = {"status": "processed", "s3_key": "ClinSync/staging/k1", "size_bytes": 100, "content_hash": HASH}
 REJECTED = {"status": "rejected", "reject_reason": ".exe is not supported"}
 
 
@@ -156,6 +158,7 @@ def test_unknown_file_raises(db_session: Session) -> None:
     {"status": "processed"},                                           # no s3_key
     {"status": "processed", "s3_key": ""},
     {"status": "processed", "s3_key": "k", "reject_reason": "why"},
+    {"status": "processed", "s3_key": "k"},                            # no content_hash (U5.2)
     {"status": "rejected"},                                            # no reason
     {"status": "rejected", "reject_reason": ""},
     {"status": "rejected", "reject_reason": "why", "s3_key": "k"},
@@ -252,7 +255,7 @@ def test_non_ascii_entry_name_is_stored_exactly(db_session: Session) -> None:
     name = "Kardiologie/Überblick Herz 2026.docx"
     upsert(db_session, file_id, token, source_entry_name=name, entry_index=0, file_name="Überblick Herz 2026.docx",
            file_ext="docx", status="processed", s3_key="ClinSync/staging/k/0000_Überblick Herz 2026.docx",
-           size_bytes=1)
+           size_bytes=1, content_hash=HASH)
     (row,) = candidates(db_session, file_id)
     assert row["source_entry_name"] == name and row["file_name"] == "Überblick Herz 2026.docx"
     assert row["s3_key"].endswith("0000_Überblick Herz 2026.docx")

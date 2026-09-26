@@ -182,12 +182,12 @@ class BoundClient:
 
     def upsert_candidate(self, *, entry_name: str | None, entry_index: int | None, file_name: str, file_ext: str,
                          status: str, size_bytes: int | None = None, s3_key: str | None = None,
-                         reject_reason: str | None = None) -> uuid.UUID:
-        """Insert or overwrite one candidate (R8.3); return its staged_id."""
+                         reject_reason: str | None = None, content_hash: str | None = None) -> uuid.UUID:
+        """Insert or overwrite one candidate (R8.3); return its staged_id. A processed one carries its SHA-256."""
         response = self._write("PUT", "candidates", {
             "source_entry_name": entry_name, "entry_index": entry_index, "file_name": file_name,
             "file_ext": file_ext, "status": status, "size_bytes": size_bytes, "s3_key": s3_key,
-            "reject_reason": reject_reason})
+            "reject_reason": reject_reason, "content_hash": content_hash})
         return uuid.UUID(response.json()["staged_id"])
 
     def finish(self, final: FinalStatus) -> None:
@@ -266,8 +266,11 @@ class S3Store:
         client = boto3.client("s3", endpoint_url=settings.AWS_ENDPOINT_URL or None, config=CLIENT_CONFIG)
         return cls(client, settings.S3_BUCKET)
 
-    def download_to_tmp(self, key: str, tmp_dir: Path | None = None) -> Path:
-        """Stream the object to a temp file in 64 KB chunks; the caller deletes it. No partial file on failure."""
+    def download_to_tmp(self, key: str, tmp_dir: Path | None = None, digest: Any = None) -> Path:
+        """Stream the object to a temp file in 64 KB chunks; the caller deletes it. No partial file on failure.
+
+        `digest` (a hashlib object) is fed each block as it is written: the file's hash with no second read (U5.2).
+        """
         fd, name = tempfile.mkstemp(prefix="clinsync-download-", dir=tmp_dir)
         os.close(fd)
         out = Path(name)
@@ -276,6 +279,8 @@ class S3Store:
             with out.open("wb") as dst:
                 for block in body.iter_chunks(CHUNK):
                     dst.write(block)
+                    if digest is not None:
+                        digest.update(block)
         except (ClientError, BotoCoreError) as exc:
             out.unlink(missing_ok=True)
             raise map_error(exc, key) from exc
