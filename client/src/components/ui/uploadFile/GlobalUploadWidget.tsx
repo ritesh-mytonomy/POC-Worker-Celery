@@ -10,7 +10,6 @@ const CONTENT_LIBRARY_PATH = '/dashboard/content-library';
 
 const PAGE_LABEL: Record<UploadQueueItem['source'], string> = {
   'content-library': 'Content Library',
-  poc5: 'POC 5',
 };
 
 /**

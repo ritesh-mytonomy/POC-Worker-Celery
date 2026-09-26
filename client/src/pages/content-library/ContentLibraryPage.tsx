@@ -116,12 +116,7 @@ const ContentLibraryPage = () => {
         errors.push(unsupportedFormatMessage(file.name));
       } else if (file.size === 0) {
         errors.push('File is empty.');
-      } else if (
-        MAX_FILE_SIZE_BYTES &&
-        file.size > MAX_FILE_SIZE_BYTES &&
-        extension !== 'bin' &&
-        extension !== 'dat'
-      ) {
+      } else if (MAX_FILE_SIZE_BYTES && file.size > MAX_FILE_SIZE_BYTES) {
         errors.push(`File exceeds the maximum size of ${formatBytes(MAX_FILE_SIZE_BYTES)}.`);
       } else if (
         findQueueDuplicate(libraryQueue, file) ||

@@ -2,7 +2,6 @@ import * as JSZip from 'jszip';
 import * as mammoth from 'mammoth';
 import type {
   FileValidationResult,
-  PocTestExtension,
   SupportedExtension,
   VideoSection,
   ZipEntryResult,
@@ -10,10 +9,7 @@ import type {
 
 export const SUPPORTED_EXTENSIONS: SupportedExtension[] = ['docx', 'pdf', 'html', 'zip'];
 
-/** Hidden POC-only extensions for large sample uploads. Not listed in the UI. */
-export const POC_TEST_EXTENSIONS: PocTestExtension[] = ['bin', 'dat'];
-
-export const ACCEPTED_FILE_INPUT = '.docx,.pdf,.html,.htm,.zip,.bin,.dat';
+export const ACCEPTED_FILE_INPUT = '.docx,.pdf,.html,.htm,.zip';
 
 const VIDEO_SECTION_REGEX = /Video\s+(\d+)\s*-\s*([^\n:]+):/gi;
 
@@ -32,16 +28,8 @@ export function getSupportedExtension(fileName: string): SupportedExtension | nu
   return null;
 }
 
-export function isPocTestExtension(extension: string | null): extension is PocTestExtension {
-  return extension !== null && (POC_TEST_EXTENSIONS as string[]).includes(extension);
-}
-
-export function getUploadableExtension(fileName: string): SupportedExtension | PocTestExtension | null {
-  const supported = getSupportedExtension(fileName);
-  if (supported) return supported;
-
-  const extension = getFileExtension(fileName);
-  return isPocTestExtension(extension) ? extension : null;
+export function getUploadableExtension(fileName: string): SupportedExtension | null {
+  return getSupportedExtension(fileName);
 }
 
 export function unsupportedFormatMessage(fileName: string): string {
@@ -230,11 +218,6 @@ export async function validateUploadFile(file: File): Promise<FileValidationResu
 
   if (file.size === 0) {
     return { valid: false, errors: ['File is empty.'] };
-  }
-
-  // POC large-file samples — do not read the whole payload into memory.
-  if (isPocTestExtension(extension)) {
-    return { valid: true, errors: [] };
   }
 
   if (extension === 'zip') {

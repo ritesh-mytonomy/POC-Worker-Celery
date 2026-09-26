@@ -153,7 +153,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
 
 ## Phase 6 · The Client
 
-- [ ] **6.1 Port and trim**
+- [x] **6.1 Port and trim**
   - Copy `Client/` into `client/`; remove the scan code and the POC 5 page. Keep `StoredUploadsTable` — 6.4 adapts it. Add a `client` compose service on `127.0.0.1:5173`.
   - **Done when:** the app serves at `http://localhost:5173`, and `npm test` passes.
   - _Requirements: U10.6, U11_

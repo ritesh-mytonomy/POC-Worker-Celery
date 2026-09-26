@@ -1,7 +1,6 @@
 import { cn } from '@/utils/cn';
 import { formatBytes } from '@/utils/formatBytes';
 import ProgressBar from '@/components/ui/ProgressBar';
-import ScanResults from '@/components/ui/uploadFile/ScanResults';
 import {
   AlertIcon,
   CheckCircleIcon,
@@ -83,16 +82,11 @@ const UploadQueueRow = ({ item, onRemove, onRetryCloudUpload }: UploadQueueRowPr
   const isChecking = !item.validated && item.status !== 'validation-failed';
   const isCloudUploading = item.status !== 'validation-failed' && item.cloudUpload?.status === 'uploading';
   const isQueued = item.status === 'queued' && !isCloudUploading && !isChecking;
-  const isScanning = item.status === 'scanning';
   const isSuccess = item.status === 'success';
   const isFailed = item.status === 'validation-failed' || item.status === 'upload-failed';
   const isDuplicate =
     isDuplicateError(item.validation?.errors) ||
     isDuplicateCloudError(item.cloudUpload?.error);
-  const scanProgress =
-    item.scan && item.scan.totalChecks
-      ? Math.round((item.scan.sections.length / item.scan.totalChecks) * 100)
-      : 0;
 
   return (
     <li className="flex items-start gap-md py-md">
@@ -113,15 +107,13 @@ const UploadQueueRow = ({ item, onRemove, onRetryCloudUpload }: UploadQueueRowPr
             >
               {item.name}
             </p>
-            {!isScanning && (
-              <p className="text-xs text-muted">
-                {formatBytes(item.size)}
-                {hasVideoSections &&
-                  ` · ${item.validation!.videoSections!.length} video section${item.validation!.videoSections!.length === 1 ? '' : 's'}`}
-                {item.validation?.zipEntries &&
-                  ` · ${item.validation.zipEntries.filter((entry) => entry.valid).length}/${item.validation.zipEntries.length} documents valid`}
-              </p>
-            )}
+            <p className="text-xs text-muted">
+              {formatBytes(item.size)}
+              {hasVideoSections &&
+                ` · ${item.validation!.videoSections!.length} video section${item.validation!.videoSections!.length === 1 ? '' : 's'}`}
+              {item.validation?.zipEntries &&
+                ` · ${item.validation.zipEntries.filter((entry) => entry.valid).length}/${item.validation.zipEntries.length} documents valid`}
+            </p>
             {isChecking && (
               <p className="text-xs text-muted">
                 {item.extension === 'zip' ? 'Checking ZIP contents…' : 'Checking file…'}
@@ -130,12 +122,6 @@ const UploadQueueRow = ({ item, onRemove, onRetryCloudUpload }: UploadQueueRowPr
             {item.status === 'validation-failed' && item.validation?.errors && (
               <p className="truncate text-xs text-danger">{item.validation.errors.join(' ')}</p>
             )}
-            {item.status === 'upload-failed' && item.scan?.error && (
-              <p className="truncate text-xs text-danger" title={item.scan.error}>
-                {item.scan.error}
-              </p>
-            )}
-            {item.scan && <ScanResults scan={item.scan} />}
             <CloudUploadStatusLine item={item} onRetryCloudUpload={onRetryCloudUpload} />
           </div>
 
@@ -143,7 +129,7 @@ const UploadQueueRow = ({ item, onRemove, onRetryCloudUpload }: UploadQueueRowPr
             {isSuccess && (
               <span className="flex items-center justify-end gap-xs text-xs font-medium text-success">
                 <CheckCircleIcon className="h-4 w-4" />
-                {item.scan && item.scan.status !== 'unsupported' ? 'Scan complete' : 'Uploaded'}
+                Uploaded
               </span>
             )}
 
@@ -173,24 +159,12 @@ const UploadQueueRow = ({ item, onRemove, onRetryCloudUpload }: UploadQueueRowPr
           </div>
         </div>
 
-        {isScanning && (
-          <div className="mt-sm flex items-center gap-sm">
-            <ProgressBar
-              value={scanProgress}
-              variant="accent"
-              label={`${item.name} scan progress`}
-              className="flex-1"
-            />
-            <span className="shrink-0 text-xs font-medium text-slate-900">{scanProgress}%</span>
-            <span className="shrink-0 text-xs text-muted">{formatBytes(item.size)}</span>
-          </div>
-        )}
       </div>
 
       <button
         type="button"
         onClick={() => onRemove(item.id)}
-        disabled={isScanning || isCloudUploading}
+        disabled={isCloudUploading}
         aria-label={`Remove ${item.name}`}
         className="shrink-0 rounded-md p-xs text-muted transition-colors hover:bg-surface hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
       >

@@ -6,7 +6,6 @@ import PageLoader from '@/components/ui/PageLoader';
 
 const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage'));
 const ContentLibraryPage = lazy(() => import('@/pages/content-library/ContentLibraryPage'));
-const Poc5Page = lazy(() => import('@/pages/poc5/Poc5Page'));
 // const ScansPage = lazy(() => import('@/pages/dashboard/ScansPage'));
 // const FindingsReportsPage = lazy(() => import('@/pages/dashboard/FindingsReportsPage'));
 // const ReviewQueuePage = lazy(() => import('@/pages/dashboard/ReviewQueuePage'));
@@ -21,10 +20,6 @@ const dashboardRoutes: RouteObject[] = [
   {
     path: '/dashboard',
     element: withSuspense(<DashboardPage />),
-  },
-  {
-    path: '/dashboard/poc-5',
-    element: withSuspense(<Poc5Page />),
   },
   {
     path: '/dashboard/content-library',

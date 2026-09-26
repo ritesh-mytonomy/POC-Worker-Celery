@@ -99,5 +99,25 @@ services:
     <<: *worker
     command: celery -A workers.tasks worker -Q clinsync.maintenance -c 1 -B -n maint@%h
 
+  # The browser client (Anugrah's React app, ported — upload-ingest-merge Phase 6), served by Vite.
+  client:
+    build: ./client
+    image: clinsync-ingest-poc-client:dev
+    environment:
+      # Read by the BROWSER, so it is the host's address for the API (published on 127.0.0.1:8000),
+      # not the compose service name. Anugrah's variable name, kept (design.md §7).
+      VITE_SCAN_API_URL: http://localhost:8000
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/ >/dev/null"]   # IPv4: Vite listens on 0.0.0.0
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
 volumes:
   redis-data:

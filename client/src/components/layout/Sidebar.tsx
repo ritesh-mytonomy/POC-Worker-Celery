@@ -1,16 +1,17 @@
+import type { ComponentType } from 'react';
 import { NavLink } from 'react-router-dom';
 import { cn } from '@/utils/cn';
 import { useAuth } from '@/hooks/useAuth';
-import { HelpIcon, LogoutIcon, SettingsIcon, UploadIcon } from '@/components/ui/icons';
+import { HelpIcon, LogoutIcon, SettingsIcon } from '@/components/ui/icons';
 import dashboardIcon from '@/assets/Dashboard.svg';
 import contentLibraryIcon from '@/assets/Content_library.svg';
 import logoIcon from '@/assets/Logo_icon.svg';
 import userAvatar from '@/assets/User_Avatar.svg';
 
-const navItems = [
+// Typed explicitly: with the POC 5 link gone every icon here is an image, and the renderer still accepts both.
+const navItems: { to: string; label: string; icon: string | ComponentType<{ className?: string }>; end?: boolean }[] = [
   { to: '/dashboard', label: 'Dashboard', icon: dashboardIcon, end: true },
   { to: '/dashboard/content-library', label: 'Content Library', icon: contentLibraryIcon },
-  { to: '/dashboard/poc-5', label: 'POC 5', icon: UploadIcon },
 ];
 
 const bottomNavItems = [
