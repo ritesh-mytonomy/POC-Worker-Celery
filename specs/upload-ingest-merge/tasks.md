@@ -100,7 +100,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** neither route exists, and nothing in `client/` referenced them — checked by search.
   - _Requirements: U4.4_
 
-- [ ] **3.6 Checkpoint M1 — upload without a browser**
+- [x] **3.6 Checkpoint M1 — upload without a browser**
   - A throwaway script calls the endpoints as the browser does and waits for `processed`.
   - **Done when:** it ends `processed` with one candidate. It becomes U-S1 in Phase 7.
 
