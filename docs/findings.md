@@ -45,3 +45,7 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
   `MessageDeduplicationId = file_id`, or a `SETNX enqueued:{file_id}` marker with a TTL, cleared on claim), or base
   the threshold on measured queue lag (oldest-message age plus a margin) — and alert when reconcile actually
   requeues, since that should mean a lost message.
+- **Test backdating needs a superuser.** The LLD's `set_updated_at` triggers overwrite a backdated `updated_at`, so
+  the tests switch triggers off for that one statement with `SET LOCAL session_replication_role = replica`, which
+  needs a superuser (the compose role is). The real build's CI database may not grant that — it may need another
+  approach, e.g. a test-only role allowed to set `session_replication_role` (PostgreSQL 15+ `GRANT SET`).

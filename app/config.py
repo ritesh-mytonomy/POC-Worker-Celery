@@ -45,7 +45,12 @@ class Settings(BaseSettings):
 
     # Infrastructure
     AWS_ENDPOINT_URL: str | None = None
+    # Host a browser can reach, for presigned URLs (upload-ingest-merge design.md §4); unset in AWS
+    S3_PUBLIC_ENDPOINT_URL: str | None = None
     S3_BUCKET: str = "clinsync-poc"
+    PRESIGN_EXPIRES_SECONDS: int = 3600
+    DOWNLOAD_URL_EXPIRES_SECONDS: int = 300
+    CORS_ORIGINS: CsvList = ["http://localhost:5173"]
     REDIS_URL: str = "redis://redis:6379/0"
     POSTGRES_USER: str = "clinsync"
     POSTGRES_PASSWORD: str = "clinsync"
@@ -60,6 +65,14 @@ class Settings(BaseSettings):
         """Parse a comma-separated string into lowercase extensions."""
         if isinstance(value, str):
             return [part.strip().lower().lstrip(".") for part in value.split(",") if part.strip()]
+        return value
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def _split_origins(cls, value: Any) -> Any:
+        """Parse a comma-separated string of origins."""
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
         return value
 
     @model_validator(mode="after")

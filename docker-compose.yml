@@ -11,6 +11,8 @@ x-app: &app
     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
     AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    # Presigned URLs must name a host the browser can reach; the API itself uses AWS_ENDPOINT_URL.
+    S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:4566}
 
 x-worker: &worker
   <<: *app
@@ -25,6 +27,8 @@ services:
     image: localstack/localstack:2026.8.4
     environment:
       SERVICES: s3
+      # Check SigV4 signatures, as real S3 does — otherwise a presigned URL for the wrong host would still work.
+      S3_SKIP_SIGNATURE_VALIDATION: "0"
       LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
     ports:
       - "127.0.0.1:4566:4566"

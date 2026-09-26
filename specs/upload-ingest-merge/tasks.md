@@ -55,7 +55,7 @@ Plan mode is worth using for **0.2, 3.4, 5.2 and 6.2**.
 
 ## Phase 2 · The API's S3 module
 
-- [ ] **2.1 `app/storage.py`** — per `design.md` §4, porting the multipart and presign logic from Anugrah's `s3_storage.py`
+- [x] **2.1 `app/storage.py`** — per `design.md` §4, porting the multipart and presign logic from Anugrah's `s3_storage.py`
   - Two clients: internal and public endpoint.
   - **Done when:** tests show a presigned URL's host is `localhost:4566` while the internal client uses `localstack:4566`, and parts are sorted on completion.
   - _Requirements: U2.3_
