@@ -35,6 +35,9 @@ export interface S3UploadResult {
   id: string;
   key: string;
   location: string;
+  /** upload-ingest-merge: the batch the file joined, and its status after complete (`uploaded`). */
+  batchId?: string;
+  status?: string;
 }
 
 interface PartRecord {
@@ -55,6 +58,7 @@ interface InitiateResponse {
   part_size?: number;
   totalParts?: number;
   total_parts?: number;
+  batchId?: string;
 }
 
 function apiUrl(path: string): string {
@@ -166,6 +170,7 @@ function putChunk(
 export class S3MultipartUploader {
   private readonly file: File;
   private readonly onProgress?: (progress: S3UploadProgress) => void;
+  private readonly batchId?: string;
   private readonly controller = new AbortController();
   private readonly activeXhrs = new Set<XMLHttpRequest>();
 
@@ -174,9 +179,13 @@ export class S3MultipartUploader {
   private fileId?: string;
   private parts: PartRecord[] = [];
 
-  constructor(file: File, handlers: { onProgress?: (progress: S3UploadProgress) => void } = {}) {
+  constructor(
+    file: File,
+    handlers: { onProgress?: (progress: S3UploadProgress) => void; batchId?: string } = {},
+  ) {
     this.file = file;
     this.onProgress = handlers.onProgress;
+    this.batchId = handlers.batchId; // one per Upload click, sent with initiate (upload-ingest-merge D4)
   }
 
   /** Starts (or restarts from scratch) the upload. Resolves with the final object's key/location. */
@@ -190,6 +199,7 @@ export class S3MultipartUploader {
           filename: this.file.name,
           fileSize: this.file.size,
           contentType: this.file.type || 'application/octet-stream',
+          ...(this.batchId ? { batchId: this.batchId } : {}),
         }),
         signal: this.controller.signal,
       },

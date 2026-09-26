@@ -10,22 +10,25 @@ import {
   isSameFile,
 } from '@/utils/duplicateCheck';
 import {
-  ACCEPTED_FILE_INPUT,
+  acceptedFileInput,
   getUploadableExtension,
   unsupportedFormatMessage,
   validateUploadFile,
 } from '@/utils/contentValidation';
+import { useUploadConfig } from '@/hooks/useUploadConfig';
+import type { UploadConfig } from '@/utils/uploadConfig';
 import { canStartCloudUpload, isBlockedFromUpload, useUploadQueue } from '@/context/UploadQueueContext';
 import { checkDuplicateUpload } from '@/utils/uploadsApi';
 import type { UploadQueueItem } from '@/types/contentLibrary';
 import { UploadIcon } from '@/components/ui/icons';
 
-const MAX_FILE_SIZE_MB = import.meta.env.VITE_MAX_UPLOAD_FILE_SIZE_MB;
-const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB ? Number(MAX_FILE_SIZE_MB) * 1024 * 1024 : undefined;
-
-const FORMATS_LABEL = `Supported formats: DOCX, PDF, HTML, ZIP (PDF only)${
-  MAX_FILE_SIZE_BYTES ? ` up to ${formatBytes(MAX_FILE_SIZE_BYTES)}` : ''
-}`;
+// Allowed types and the size limit come from the server (GET /api/v1/uploads/config), not a client setting.
+const formatsLabel = (config: UploadConfig) => {
+  const types = config.allowedTopLevelExt.map((ext) =>
+    ext === 'zip' ? `ZIP (${config.allowedZipEntryExt.map((e) => e.toUpperCase()).join(', ')} only)` : ext.toUpperCase(),
+  );
+  return `Supported formats: ${types.join(', ')} up to ${formatBytes(config.maxUploadBytes)}`;
+};
 
 let idCounter = 0;
 const createItemId = () => {
@@ -43,6 +46,7 @@ const ContentLibraryPage = () => {
     removeItem,
     clearItems,
   } = useUploadQueue();
+  const { config, error: configError } = useUploadConfig();
 
   const items = allItems.filter((item) => item.source === 'content-library');
   const libraryQueue = items.map((item) => ({ id: item.id, name: item.name, size: item.size }));
@@ -66,7 +70,7 @@ const ContentLibraryPage = () => {
   };
 
   const validateZipItem = async (id: string, file: File) => {
-    const result = await validateUploadFile(file);
+    const result = await validateUploadFile(file, config!);
     if (!result.valid) {
       applyValidationFailure(id, result.errors);
       return;
@@ -107,17 +111,18 @@ const ContentLibraryPage = () => {
   };
 
   const addFiles = (files: FileList) => {
+    if (!config) return;
     const fileList = Array.from(files);
     const newItems: UploadQueueItem[] = fileList.map((file, index) => {
-      const extension = getUploadableExtension(file.name);
+      const extension = getUploadableExtension(file.name, config);
       const errors: string[] = [];
 
       if (!extension) {
-        errors.push(unsupportedFormatMessage(file.name));
+        errors.push(unsupportedFormatMessage(file.name, config));
       } else if (file.size === 0) {
         errors.push('File is empty.');
-      } else if (MAX_FILE_SIZE_BYTES && file.size > MAX_FILE_SIZE_BYTES) {
-        errors.push(`File exceeds the maximum size of ${formatBytes(MAX_FILE_SIZE_BYTES)}.`);
+      } else if (file.size > config.maxUploadBytes) {
+        errors.push(`File exceeds the maximum size of ${formatBytes(config.maxUploadBytes)}.`);
       } else if (
         findQueueDuplicate(libraryQueue, file) ||
         fileList.slice(0, index).some((other) => isSameFile(other, file))
@@ -155,7 +160,8 @@ const ContentLibraryPage = () => {
 
   const handleUpload = () => {
     const pending = items.filter(canStartCloudUpload);
-    for (const item of pending) startCloudUpload(item);
+    const batchId = crypto.randomUUID(); // one batch per Upload click, sent with every initiate (D4)
+    for (const item of pending) startCloudUpload(item, batchId);
   };
 
   const isUploading = items.some(
@@ -175,11 +181,17 @@ const ContentLibraryPage = () => {
         <div className="rounded-lg border border-border bg-background p-lg">
           <p className="text-xs font-medium uppercase tracking-wide text-muted">Upload Files</p>
           <div className="mt-sm">
-            <UploadDropzone
-              onFilesSelected={addFiles}
-              accept={ACCEPTED_FILE_INPUT}
-              formatsLabel={FORMATS_LABEL}
-            />
+            {config ? (
+              <UploadDropzone
+                onFilesSelected={addFiles}
+                accept={acceptedFileInput(config)}
+                formatsLabel={formatsLabel(config)}
+              />
+            ) : (
+              <p className={configError ? 'text-sm text-danger' : 'text-sm text-muted'}>
+                {configError ?? 'Loading upload settings…'}
+              </p>
+            )}
           </div>
         </div>
 

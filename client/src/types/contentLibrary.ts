@@ -22,6 +22,8 @@ export interface ZipEntryResult {
 export interface FileValidationResult {
   valid: boolean;
   errors: string[];
+  /** ZIP entries that will not become documents (disallowed type, nested too deeply); the zip still uploads. */
+  warnings?: string[];
   videoSections?: VideoSection[];
   zipEntries?: ZipEntryResult[];
 }
@@ -40,6 +42,9 @@ export interface CloudUploadState {
   error?: string;
   key?: string;
   location?: string;
+  /** upload-ingest-merge: the batch of this row's Upload click, and the server's file id once complete. */
+  batchId?: string;
+  fileId?: string;
 }
 
 /** Which page added this item — lets a page show only its own uploads while the queue itself is shared app-wide. */

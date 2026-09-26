@@ -158,7 +158,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** the app serves at `http://localhost:5173`, and `npm test` passes.
   - _Requirements: U10.6, U11_
 
-- [ ] **6.2 The upload-code changes U10.2 allows** — *plan mode*
+- [x] **6.2 The upload-code changes U10.2 allows** — *plan mode*
   - One `batchId` per Upload click, passed to every `initiate` of it. The abort behaviour, per D15. The zip check, per D16. New code feeding the batch's statuses into the rows, labelled per `design.md` §3.
   - **The upload mechanics don't change** — chunking, parallel parts, retries, ETags, completion.
   - **Done when:** uploading two files with one click puts both in one batch and both reach `processed`; a zip with a bad entry uploads with a warning, and one with no usable entry is blocked; a diff of the upload code against the Upload POC shows the mechanics unchanged and no changes beyond U10.2's list.

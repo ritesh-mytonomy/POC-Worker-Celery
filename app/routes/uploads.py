@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db_session
 from app.repositories import candidates, files
 from app.routes.errors import ApiError
@@ -85,6 +86,23 @@ class StagedOut(BaseModel):
 
     batch_id: uuid.UUID
     staged: list[StagedDocumentOut]
+
+
+class UploadConfigOut(BaseModel):
+    """What the client may upload — the ONE source of truth for its file checks (D2 changes only the settings)."""
+
+    allowed_top_level_ext: list[str]
+    allowed_zip_entry_ext: list[str]
+    max_upload_bytes: int
+    max_zip_folder_depth: int
+
+
+@router.get("/config", response_model=UploadConfigOut)
+def upload_config() -> UploadConfigOut:
+    """The allowed file types, zip entry types, folder depth and size limit, straight from the settings."""
+    s = get_settings()
+    return UploadConfigOut(allowed_top_level_ext=s.ALLOWED_TOP_LEVEL_EXT, allowed_zip_entry_ext=s.ALLOWED_ZIP_ENTRY_EXT,
+                           max_upload_bytes=s.MAX_UPLOAD_BYTES, max_zip_folder_depth=s.MAX_ZIP_FOLDER_DEPTH)
 
 
 @router.get("/batches/{batch_id}", response_model=BatchOut)

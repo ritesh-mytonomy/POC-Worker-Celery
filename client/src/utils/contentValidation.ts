@@ -6,10 +6,7 @@ import type {
   VideoSection,
   ZipEntryResult,
 } from '@/types/contentLibrary';
-
-export const SUPPORTED_EXTENSIONS: SupportedExtension[] = ['docx', 'pdf', 'html', 'zip'];
-
-export const ACCEPTED_FILE_INPUT = '.docx,.pdf,.html,.htm,.zip';
+import type { UploadConfig } from '@/utils/uploadConfig';
 
 const VIDEO_SECTION_REGEX = /Video\s+(\d+)\s*-\s*([^\n:]+):/gi;
 
@@ -18,24 +15,29 @@ export function getFileExtension(fileName: string): string | null {
   return match?.[1]?.toLowerCase() ?? null;
 }
 
-export function getSupportedExtension(fileName: string): SupportedExtension | null {
+export function getSupportedExtension(fileName: string, config: UploadConfig): SupportedExtension | null {
   const extension = getFileExtension(fileName);
 
   if (!extension) return null;
-  if (extension === 'htm') return 'html';
-  if ((SUPPORTED_EXTENSIONS as string[]).includes(extension)) return extension as SupportedExtension;
+  const normalized = extension === 'htm' ? 'html' : extension;
+  if (config.allowedTopLevelExt.includes(normalized)) return normalized as SupportedExtension;
 
   return null;
 }
 
-export function getUploadableExtension(fileName: string): SupportedExtension | null {
-  return getSupportedExtension(fileName);
+export function getUploadableExtension(fileName: string, config: UploadConfig): SupportedExtension | null {
+  return getSupportedExtension(fileName, config);
 }
 
-export function unsupportedFormatMessage(fileName: string): string {
+/** The file picker's accept list, from the server's allowed types (e.g. ".docx,.zip"). */
+export function acceptedFileInput(config: UploadConfig): string {
+  return config.allowedTopLevelExt.flatMap((ext) => (ext === 'html' ? ['.html', '.htm'] : [`.${ext}`])).join(',');
+}
+
+export function unsupportedFormatMessage(fileName: string, config: UploadConfig): string {
   const extension = getFileExtension(fileName);
   if (extension) return `.${extension} is not a supported format`;
-  return `Unsupported file type. Supported formats: ${SUPPORTED_EXTENSIONS.map((ext) => ext.toUpperCase()).join(', ')}.`;
+  return `Unsupported file type. Supported formats: ${config.allowedTopLevelExt.map((ext) => ext.toUpperCase()).join(', ')}.`;
 }
 
 export function extractVideoSections(text: string): VideoSection[] {
@@ -121,10 +123,17 @@ async function validateBufferByExtension(
 ): Promise<FileValidationResult> {
   if (extension === 'docx') return validateDocxBuffer(arrayBuffer);
   if (extension === 'pdf') return validatePdfBuffer(arrayBuffer);
-  return validateHtmlText(new TextDecoder().decode(arrayBuffer));
+  if (extension === 'html') return validateHtmlText(new TextDecoder().decode(arrayBuffer));
+  return { valid: true, errors: [] }; // allowed by the server, no browser-side check: the worker decides
 }
 
-async function validateZipBuffer(file: File): Promise<FileValidationResult> {
+/**
+ * The ZIP check (upload-ingest-merge D16), following the server's allowed-entry list and folder depth.
+ * __MACOSX/ entries and hidden files are skipped SILENTLY, as the server skips them — every Mac zip has them.
+ * An entry of a disallowed type, or nested too deeply, is a WARNING: the zip still uploads and the worker rejects
+ * that entry with its reason. The zip is blocked only when no entry at all is usable.
+ */
+async function validateZipBuffer(file: File, config: UploadConfig): Promise<FileValidationResult> {
   let zip: Awaited<ReturnType<typeof JSZip.loadAsync>>;
 
   try {
@@ -144,7 +153,7 @@ async function validateZipBuffer(file: File): Promise<FileValidationResult> {
     const fileName = segments[segments.length - 1];
     const depth = segments.length - 1;
 
-    if (depth > 1) {
+    if (depth > config.maxZipFolderDepth) {
       zipEntries.push({
         id: entry.name,
         path: entry.name,
@@ -156,63 +165,52 @@ async function validateZipBuffer(file: File): Promise<FileValidationResult> {
     }
 
     const extension = getFileExtension(fileName);
-    if (extension !== 'pdf') {
+    if (!extension || !config.allowedZipEntryExt.includes(extension)) {
       zipEntries.push({
         id: entry.name,
         path: entry.name,
         fileName,
         valid: false,
-        error: extension
-          ? `Only PDF files are allowed inside a ZIP (.${extension} is not supported).`
-          : 'Only PDF files are allowed inside a ZIP.',
+        error: extension ? `.${extension} is not supported inside a ZIP.` : 'Files without an extension are not supported.',
       });
       continue;
     }
 
-    const buffer = await entry.async('arraybuffer');
-    if (buffer.byteLength === 0) {
-      zipEntries.push({ id: entry.name, path: entry.name, fileName, valid: false, error: 'File is empty.' });
+    if (extension === 'pdf') {
+      const buffer = await entry.async('arraybuffer');
+      const innerResult = buffer.byteLength === 0
+        ? { valid: false, errors: ['File is empty.'] }
+        : await validatePdfBuffer(buffer);
+      zipEntries.push({
+        id: entry.name,
+        path: entry.name,
+        fileName,
+        valid: innerResult.valid,
+        error: innerResult.errors[0],
+      });
       continue;
     }
 
-    const innerResult = await validatePdfBuffer(buffer);
-    zipEntries.push({
-      id: entry.name,
-      path: entry.name,
-      fileName,
-      valid: innerResult.valid,
-      error: innerResult.errors[0],
-    });
+    zipEntries.push({ id: entry.name, path: entry.name, fileName, valid: true });
   }
 
-  const errors: string[] = [];
-  const invalidEntries = zipEntries.filter((entry) => !entry.valid);
+  const warnings = zipEntries.filter((entry) => !entry.valid).map((entry) => `${entry.path}: ${entry.error}`);
 
-  if (zipEntries.length === 0) {
-    errors.push('The ZIP file does not contain any PDF files.');
-  } else if (invalidEntries.length > 0) {
-    const unsupported = invalidEntries
-      .filter((entry) => entry.error?.includes('Only PDF files are allowed'))
-      .map((entry) => entry.fileName);
-    if (unsupported.length > 0) {
-      errors.push(`ZIP must contain only PDF files. Unsupported: ${unsupported.join(', ')}.`);
-    } else {
-      errors.push('One or more PDF files inside the ZIP are invalid.');
-    }
+  if (!zipEntries.some((entry) => entry.valid)) {
+    const allowed = config.allowedZipEntryExt.map((ext) => ext.toUpperCase()).join(', ');
+    return { valid: false, errors: [`The ZIP file does not contain any ${allowed} files that can be added.`], warnings, zipEntries };
   }
 
-  const valid = zipEntries.length > 0 && invalidEntries.length === 0;
-
-  return { valid, errors, zipEntries };
+  return { valid: true, errors: [], warnings, zipEntries };
 }
 
-export async function validateUploadFile(file: File): Promise<FileValidationResult> {
-  const extension = getUploadableExtension(file.name);
+export async function validateUploadFile(file: File, config: UploadConfig): Promise<FileValidationResult> {
+  const extension = getUploadableExtension(file.name, config);
 
   if (!extension) {
     return {
       valid: false,
-      errors: [unsupportedFormatMessage(file.name)],
+      errors: [unsupportedFormatMessage(file.name, config)],
     };
   }
 
@@ -221,7 +219,7 @@ export async function validateUploadFile(file: File): Promise<FileValidationResu
   }
 
   if (extension === 'zip') {
-    return validateZipBuffer(file);
+    return validateZipBuffer(file, config);
   }
 
   const arrayBuffer = await file.arrayBuffer();

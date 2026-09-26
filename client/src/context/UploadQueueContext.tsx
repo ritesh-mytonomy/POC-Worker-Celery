@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { isDuplicateCloudError } from '@/utils/duplicateCheck';
-import { S3MultipartUploader, S3UploadAborted } from '@/utils/s3ChunkedUpload';
+import { S3MultipartUploader, S3UploadAborted, type S3UploadResult } from '@/utils/s3ChunkedUpload';
 import type { CloudUploadState, UploadQueueItem } from '@/types/contentLibrary';
 
 /**
@@ -31,7 +31,7 @@ interface UploadQueueContextValue {
   items: UploadQueueItem[];
   enqueueItems: (items: UploadQueueItem[]) => void;
   updateItem: (id: string, patch: Partial<UploadQueueItem>) => void;
-  startCloudUpload: (item: UploadQueueItem) => void;
+  startCloudUpload: (item: UploadQueueItem, batchId?: string) => void;
   retryCloudUpload: (id: string) => void;
   removeItem: (id: string) => void;
   clearItems: (predicate: (item: UploadQueueItem) => boolean) => void;
@@ -59,7 +59,7 @@ export const UploadQueueProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const handleCloudUploadSettled = useCallback(
-    (id: string, run: Promise<{ id: string; key: string; location: string }>) => {
+    (id: string, run: Promise<S3UploadResult>) => {
       run
         .then((result) => {
           uploadersRef.current.delete(id);
@@ -70,6 +70,8 @@ export const UploadQueueProvider = ({ children }: { children: ReactNode }) => {
             uploadedBytes: cloudUpload.totalBytes,
             key: result.key,
             location: result.location,
+            fileId: result.id, // joins the server's file statuses to this row
+            batchId: result.batchId ?? cloudUpload.batchId,
           }));
           setItems((prev) =>
             prev.map((item) =>
@@ -102,8 +104,10 @@ export const UploadQueueProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const startCloudUpload = useCallback(
-    (item: UploadQueueItem) => {
+    (item: UploadQueueItem, batchId?: string) => {
       if (isBlockedFromUpload(item)) return;
+      // One batch per Upload click (D4); a retry of this row keeps the batch it started in.
+      const batch = batchId ?? item.cloudUpload?.batchId;
 
       const existing = uploadersRef.current.get(item.id);
       if (existing && item.cloudUpload?.status === 'failed') {
@@ -122,9 +126,10 @@ export const UploadQueueProvider = ({ children }: { children: ReactNode }) => {
             totalBytes: progress.totalBytes,
             percent: progress.percent,
           })),
+        batchId: batch,
       });
       uploadersRef.current.set(item.id, uploader);
-      patchCloudUpload(item.id, (cloudUpload) => ({ ...cloudUpload, status: 'uploading', error: undefined }));
+      patchCloudUpload(item.id, (cloudUpload) => ({ ...cloudUpload, status: 'uploading', error: undefined, batchId: batch }));
       handleCloudUploadSettled(item.id, uploader.start());
     },
     [handleCloudUploadSettled, patchCloudUpload],

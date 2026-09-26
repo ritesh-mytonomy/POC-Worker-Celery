@@ -1,6 +1,7 @@
 import { cn } from '@/utils/cn';
 import { formatBytes } from '@/utils/formatBytes';
 import ProgressBar from '@/components/ui/ProgressBar';
+import ServerStatusLine from '@/components/ui/uploadFile/ServerStatusLine';
 import {
   AlertIcon,
   CheckCircleIcon,
@@ -11,11 +12,14 @@ import {
 } from '@/components/ui/icons';
 import { isDuplicateCloudError, isDuplicateError } from '@/utils/duplicateCheck';
 import type { UploadQueueItem } from '@/types/contentLibrary';
+import type { StatusLabel } from '@/utils/statusMapping';
 
 interface UploadQueueRowProps {
   item: UploadQueueItem;
   onRemove: (id: string) => void;
   onRetryCloudUpload?: (id: string) => void;
+  /** The file's processing status from the server, once uploaded (upload-ingest-merge 6.2). */
+  serverStatus?: StatusLabel | null;
 }
 
 const CloudUploadStatusLine = ({
@@ -77,7 +81,7 @@ const CloudUploadStatusLine = ({
   return null;
 };
 
-const UploadQueueRow = ({ item, onRemove, onRetryCloudUpload }: UploadQueueRowProps) => {
+const UploadQueueRow = ({ item, onRemove, onRetryCloudUpload, serverStatus }: UploadQueueRowProps) => {
   const hasVideoSections = Boolean(item.validation?.videoSections?.length);
   const isChecking = !item.validated && item.status !== 'validation-failed';
   const isCloudUploading = item.status !== 'validation-failed' && item.cloudUpload?.status === 'uploading';
@@ -122,7 +126,14 @@ const UploadQueueRow = ({ item, onRemove, onRetryCloudUpload }: UploadQueueRowPr
             {item.status === 'validation-failed' && item.validation?.errors && (
               <p className="truncate text-xs text-danger">{item.validation.errors.join(' ')}</p>
             )}
+            {item.status !== 'validation-failed' &&
+              item.validation?.warnings?.map((warning) => (
+                <p key={warning} className="truncate text-xs text-amber-600" title={warning}>
+                  {warning}
+                </p>
+              ))}
             <CloudUploadStatusLine item={item} onRetryCloudUpload={onRetryCloudUpload} />
+            {serverStatus && <ServerStatusLine status={serverStatus} />}
           </div>
 
           <div className="shrink-0 text-right">
