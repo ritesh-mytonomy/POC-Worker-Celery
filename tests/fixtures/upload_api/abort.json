@@ -1,0 +1,27 @@
+{
+  "endpoint": "POST /api/uploads/abort",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "note": "The Client sends this with keepalive and ignores the response. The 'initiated' row is deleted.",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/abort",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "key": "processed/ce68bdbe-ce48-4900-9796-ad3affc6eebf/abort-me.pdf",
+      "uploadId": "JjUDWDCRAu_0b70eRtAMcZtI5AI0noUiYVJi7eJ160QkuLRcHdoccW7if1Uyie0YaWis-qyi-52_sI4lzl6I8KQrtEkf6Fg1_Q6z1cswRS2z7zik0prAsjgLWN--ag12"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "ok": true
+    }
+  }
+}

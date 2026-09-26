@@ -1,0 +1,41 @@
+{
+  "endpoint": "POST /api/uploads/complete",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "note": "ZIP \u2192 key under incoming/, extract_zip enqueued on Redis, status 'extracting'. No worker was running. The server only checks the 'PK' header here; entry checks happen in the worker.",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/complete",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "id": "9e15e1f2-8c9e-4531-8ba3-39986df7c27e",
+      "fileId": "9e15e1f2-8c9e-4531-8ba3-39986df7c27e",
+      "key": "incoming/9e15e1f2-8c9e-4531-8ba3-39986df7c27e/mixed.zip",
+      "uploadId": "zgsS26hcd1qVWTMVB0haUi9_mi6jMUraaNRs6tiEkgUtg2yhXxkOfH5jV3wo96Cx4fB0dMnDbuGJmCs616fgQm6OfIMwJ6n18gpVFWuJDSk7zIB8Nt08sTLlkebYE9uP",
+      "filename": "mixed.zip",
+      "fileSize": 102894,
+      "contentType": "application/zip",
+      "parts": [
+        {
+          "partNumber": 1,
+          "etag": "\"8d418c0796f81b3b4a1c3c100156cea6\""
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "id": "9e15e1f2-8c9e-4531-8ba3-39986df7c27e",
+      "location": "http://clinsync-uploads.s3.localhost.localstack.cloud:4566/incoming/9e15e1f2-8c9e-4531-8ba3-39986df7c27e/mixed.zip",
+      "key": "incoming/9e15e1f2-8c9e-4531-8ba3-39986df7c27e/mixed.zip",
+      "status": "extracting"
+    }
+  }
+}

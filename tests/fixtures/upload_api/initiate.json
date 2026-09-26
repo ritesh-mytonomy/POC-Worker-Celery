@@ -1,0 +1,32 @@
+{
+  "endpoint": "POST /api/uploads/initiate",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/initiate",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "filename": "report.pdf",
+      "fileSize": 12583035,
+      "contentType": "application/pdf"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "id": "036af1f0-1525-48fa-9ea4-8f35c9b1d115",
+      "fileId": "036af1f0-1525-48fa-9ea4-8f35c9b1d115",
+      "uploadId": "CwvvIPSs0ddRRhXlSsDySez3T6DyTA49oTYoXCEZwxANvbYzQcFCMRDo39u-WbHFEti7uQg6Dls2fw_8Ep7xOO7Ikjsw8y6DhYSrlOxXZeuh4N6ZnlxBRMkXMC0VfU67",
+      "key": "processed/036af1f0-1525-48fa-9ea4-8f35c9b1d115/report.pdf",
+      "partSize": 8388608,
+      "totalParts": 2
+    }
+  }
+}

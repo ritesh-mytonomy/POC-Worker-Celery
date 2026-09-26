@@ -1,0 +1,21 @@
+{
+  "endpoint": "GET /api/uploads/JjUDWDCRAu_0b70eRtAMcZtI5AI0noUiYVJi7eJ160QkuLRcHdoccW7if1Uyie0YaWis-qyi-52_sI4lzl6I8KQrtEkf6Fg1_Q6z1cswRS2z7zik0prAsjgLWN--ag12/parts",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "request": {
+    "method": "GET",
+    "path": "/api/uploads/JjUDWDCRAu_0b70eRtAMcZtI5AI0noUiYVJi7eJ160QkuLRcHdoccW7if1Uyie0YaWis-qyi-52_sI4lzl6I8KQrtEkf6Fg1_Q6z1cswRS2z7zik0prAsjgLWN--ag12/parts?key=processed/ce68bdbe-ce48-4900-9796-ad3affc6eebf/abort-me.pdf",
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "detail": "S3 error (NoSuchUpload): The specified upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed."
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "endpoint": "POST /api/uploads/abort",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "note": "What the Client sends when a finished upload is removed or the queue is cleared: harmless today because only 'initiated' rows are deleted.",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/abort",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "key": "processed/036af1f0-1525-48fa-9ea4-8f35c9b1d115/report.pdf",
+      "uploadId": "CwvvIPSs0ddRRhXlSsDySez3T6DyTA49oTYoXCEZwxANvbYzQcFCMRDo39u-WbHFEti7uQg6Dls2fw_8Ep7xOO7Ikjsw8y6DhYSrlOxXZeuh4N6ZnlxBRMkXMC0VfU67"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "ok": true
+    }
+  }
+}

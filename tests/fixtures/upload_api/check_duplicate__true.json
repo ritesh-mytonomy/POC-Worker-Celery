@@ -1,0 +1,28 @@
+{
+  "endpoint": "POST /api/uploads/check-duplicate",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "note": "Name match is case-insensitive.",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/check-duplicate",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "filename": "REPORT.pdf",
+      "fileSize": 12583035
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "duplicate": true,
+      "message": "Duplicate file \u2014 REPORT.pdf has already been uploaded."
+    }
+  }
+}

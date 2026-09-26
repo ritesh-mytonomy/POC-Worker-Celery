@@ -1,0 +1,41 @@
+{
+  "endpoint": "POST /api/uploads/complete",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/complete",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "id": "036af1f0-1525-48fa-9ea4-8f35c9b1d115",
+      "fileId": "036af1f0-1525-48fa-9ea4-8f35c9b1d115",
+      "key": "processed/036af1f0-1525-48fa-9ea4-8f35c9b1d115/report.pdf",
+      "uploadId": "CwvvIPSs0ddRRhXlSsDySez3T6DyTA49oTYoXCEZwxANvbYzQcFCMRDo39u-WbHFEti7uQg6Dls2fw_8Ep7xOO7Ikjsw8y6DhYSrlOxXZeuh4N6ZnlxBRMkXMC0VfU67",
+      "filename": "report.pdf",
+      "fileSize": 12583035,
+      "contentType": "application/pdf",
+      "parts": [
+        {
+          "partNumber": 1,
+          "etag": "\"100b6168b6b7874db1da1306ebaaf1b1\""
+        },
+        {
+          "partNumber": 2,
+          "etag": "\"37e3b79496210e68947e34d163cccb3d\""
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 409,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "detail": "Upload is not awaiting completion."
+    }
+  }
+}

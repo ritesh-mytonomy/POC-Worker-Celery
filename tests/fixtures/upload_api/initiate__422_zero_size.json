@@ -1,0 +1,41 @@
+{
+  "endpoint": "POST /api/uploads/initiate",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "note": "Pydantic Field(gt=0). The Client blocks empty files before calling.",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/initiate",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "filename": "empty.pdf",
+      "fileSize": 0,
+      "contentType": "application/pdf"
+    }
+  },
+  "response": {
+    "status": 422,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "detail": [
+        {
+          "type": "greater_than",
+          "loc": [
+            "body",
+            "fileSize"
+          ],
+          "msg": "Input should be greater than 0",
+          "input": 0,
+          "ctx": {
+            "gt": 0
+          }
+        }
+      ]
+    }
+  }
+}

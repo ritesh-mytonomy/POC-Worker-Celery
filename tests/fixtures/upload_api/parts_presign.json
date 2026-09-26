@@ -1,0 +1,33 @@
+{
+  "endpoint": "POST /api/uploads/parts/presign",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/parts/presign",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "key": "processed/036af1f0-1525-48fa-9ea4-8f35c9b1d115/report.pdf",
+      "uploadId": "CwvvIPSs0ddRRhXlSsDySez3T6DyTA49oTYoXCEZwxANvbYzQcFCMRDo39u-WbHFEti7uQg6Dls2fw_8Ep7xOO7Ikjsw8y6DhYSrlOxXZeuh4N6ZnlxBRMkXMC0VfU67",
+      "partNumbers": [
+        1,
+        2
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "urls": {
+        "1": "http://localhost:4566/clinsync-uploads/processed/036af1f0-1525-48fa-9ea4-8f35c9b1d115/report.pdf?uploadId=CwvvIPSs0ddRRhXlSsDySez3T6DyTA49oTYoXCEZwxANvbYzQcFCMRDo39u-WbHFEti7uQg6Dls2fw_8Ep7xOO7Ikjsw8y6DhYSrlOxXZeuh4N6ZnlxBRMkXMC0VfU67&partNumber=1&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=test%2F20260925%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260925T114837Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=a9fb40033c956f3369ab2321b220928e6f044cb2e303756537483ab79fafcced",
+        "2": "http://localhost:4566/clinsync-uploads/processed/036af1f0-1525-48fa-9ea4-8f35c9b1d115/report.pdf?uploadId=CwvvIPSs0ddRRhXlSsDySez3T6DyTA49oTYoXCEZwxANvbYzQcFCMRDo39u-WbHFEti7uQg6Dls2fw_8Ep7xOO7Ikjsw8y6DhYSrlOxXZeuh4N6ZnlxBRMkXMC0VfU67&partNumber=2&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=test%2F20260925%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260925T114837Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=564d5f72ca20f51700c76b6b3689986f8c23696f70ae08a5c613675fd772ff10"
+      }
+    }
+  }
+}
