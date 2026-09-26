@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     STALE_AFTER_SECONDS: int = 30
     SWEEP_INTERVAL_SECONDS: int = 15
     RECONCILE_AFTER_SECONDS: int = 30
+    UPLOAD_ABANDON_SECONDS: int = 3600   # staged/uploading longer → cancelled (upload-ingest-merge U4.3); prod 86400
 
     # Archive guards
     MAX_ZIP_ENTRIES: int = 500

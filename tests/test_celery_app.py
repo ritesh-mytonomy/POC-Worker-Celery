@@ -50,19 +50,22 @@ def test_routes_send_each_task_family_to_its_queue(conf: Any) -> None:
                       "workers.sweepers.*": {"queue": "clinsync.maintenance"}}
 
 
-def test_beat_schedule_runs_both_sweeps_every_interval_with_expiry(conf: Any) -> None:
-    """Both sweeps every SWEEP_INTERVAL_SECONDS (design.md §7); each message expires after one interval (11.1)."""
+def test_beat_schedule_runs_every_sweep_every_interval_with_expiry(conf: Any) -> None:
+    """The stale, reconcile and abandoned-upload sweeps every SWEEP_INTERVAL_SECONDS (design.md §7; merge U4.3);
+    each message expires after one interval (11.1)."""
     interval = get_settings().SWEEP_INTERVAL_SECONDS
     assert conf.beat_schedule == {
         "stale-sweep": {"task": "workers.sweepers.run_stale_sweep", "schedule": interval,
                         "options": {"expires": interval}},
         "reconcile-sweep": {"task": "workers.sweepers.run_reconcile_sweep", "schedule": interval,
                             "options": {"expires": interval}},
+        "abandoned-sweep": {"task": "workers.sweepers.run_abandoned_sweep", "schedule": interval,
+                            "options": {"expires": interval}},
     }
 
 
 def test_sweep_tasks_are_registered_and_routed_to_maintenance(conf: Any) -> None:
-    """workers.tasks registers both sweepers; both route to clinsync.maintenance.
+    """workers.tasks registers the three sweepers; all route to clinsync.maintenance.
 
     Imports the include= modules exactly as a starting worker does, so the test does not depend on another test
     having imported workers.tasks first.
@@ -72,18 +75,20 @@ def test_sweep_tasks_are_registered_and_routed_to_maintenance(conf: Any) -> None
     registered = _fresh("import json, workers.tasks as w; w.app.loader.import_default_modules(); "
                         "print(json.dumps(sorted(w.app.tasks)))")
     assert not [t for t in registered if t.startswith(("poc.", "workers.scan."))], "production app registers no POC task"
-    for name in ("workers.sweepers.run_stale_sweep", "workers.sweepers.run_reconcile_sweep"):
+    for name in ("workers.sweepers.run_stale_sweep", "workers.sweepers.run_reconcile_sweep",
+                 "workers.sweepers.run_abandoned_sweep"):
         assert name in app.tasks
         assert app.amqp.router.route({}, name)["queue"].name == "clinsync.maintenance"
 
 
 EXPECTED_PRODUCTION = {"workers.ingest.process_upload", "workers.sweepers.run_stale_sweep",
-                       "workers.sweepers.run_reconcile_sweep"}
+                       "workers.sweepers.run_reconcile_sweep", "workers.sweepers.run_abandoned_sweep"}
 
 
 def test_registered_task_names_are_exactly_the_contract() -> None:
-    """Task names are the §6.3 message contract and must not change: workers.tasks registers exactly the three
-    production names, poc.worker exactly those plus workers.scan.scan_stub (Celery's own celery.* tasks aside)."""
+    """Task names are the §6.3 message contract and must not change: workers.tasks registers exactly the four
+    production names (merge U4.3 added run_abandoned_sweep); poc.worker exactly those plus workers.scan.scan_stub
+    (Celery's own celery.* tasks aside)."""
     production = _fresh("import json, workers.tasks as w; w.app.loader.import_default_modules(); "
                         "print(json.dumps(sorted(t for t in w.app.tasks if not t.startswith('celery.'))))")
     with_poc = _fresh("import json, poc.worker as p; p.app.loader.import_default_modules(); "

@@ -116,7 +116,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** a fixture zip with `__MACOSX/` entries and a deep folder gives the expected `entries_total` and one depth rejection; the 16 crash-window tests still pass.
   - _Requirements: U5.3, U5.4_
 
-- [ ] **4.3 Abandoned-upload sweep**
+- [x] **4.3 Abandoned-upload sweep**
   - **Done when:** a file left `staged` or `uploading` beyond the threshold becomes `error`, with its multipart upload aborted.
   - _Requirements: U4.3_
 

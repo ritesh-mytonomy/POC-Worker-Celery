@@ -85,6 +85,13 @@ class StaleSweepOut(BaseModel):
     enqueue_failed: int
 
 
+class AbandonedSweepOut(BaseModel):
+    """Result of an abandoned-upload sweep."""
+
+    cancelled: int
+    abort_failed: int
+
+
 class ReconcileSweepOut(BaseModel):
     """Result of a reconcile sweep."""
 
@@ -165,3 +172,10 @@ def reconcile_sweep(db: Session = Depends(get_db_session)) -> ReconcileSweepOut:
     s = get_settings()
     return ReconcileSweepOut(**sweeps.reconcile_sweep(db, reconcile_after_seconds=s.RECONCILE_AFTER_SECONDS,
                                                       max_attempts=s.MAX_ATTEMPTS))
+
+
+@router.post("/sweeps/abandoned", response_model=AbandonedSweepOut)
+def abandoned_sweep(db: Session = Depends(get_db_session)) -> AbandonedSweepOut:
+    """Cancel uploads left staged or uploading longer than UPLOAD_ABANDON_SECONDS (upload-ingest-merge U4.3)."""
+    return AbandonedSweepOut(**sweeps.abandoned_sweep(
+        db, abandon_after_seconds=get_settings().UPLOAD_ABANDON_SECONDS))

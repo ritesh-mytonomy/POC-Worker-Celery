@@ -17,7 +17,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 
 from app.config import get_settings
 from app.constants import (
-    QUEUE_INGEST, QUEUE_MAINTENANCE, TASK_PROCESS_UPLOAD, TASK_RECONCILE_SWEEP, TASK_STALE_SWEEP,
+    QUEUE_INGEST, QUEUE_MAINTENANCE, TASK_ABANDONED_SWEEP, TASK_PROCESS_UPLOAD, TASK_RECONCILE_SWEEP, TASK_STALE_SWEEP,
 )
 from app.errors import ClaimSuperseded
 from app.logging import configure_logging, get_logger
@@ -74,6 +74,8 @@ app.conf.update(
         "stale-sweep":     {"task": TASK_STALE_SWEEP, "schedule": settings.SWEEP_INTERVAL_SECONDS,
                             "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},
         "reconcile-sweep": {"task": TASK_RECONCILE_SWEEP, "schedule": settings.SWEEP_INTERVAL_SECONDS,
+                            "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},
+        "abandoned-sweep": {"task": TASK_ABANDONED_SWEEP, "schedule": settings.SWEEP_INTERVAL_SECONDS,
                             "options": {"expires": settings.SWEEP_INTERVAL_SECONDS}},
     },
     beat_schedule_filename="/tmp/celerybeat-schedule",   # /srv is not writable by the app user
@@ -379,3 +381,9 @@ def run_stale_sweep(self: Any) -> dict[str, int] | None:
 def run_reconcile_sweep(self: Any) -> dict[str, int] | None:
     """Re-enqueue confirmed files nobody claimed, or error them when attempts are spent (R11.5)."""
     return _sweep("reconcile", self.request.id)
+
+
+@app.task(bind=True, name=TASK_ABANDONED_SWEEP, ignore_result=True)
+def run_abandoned_sweep(self: Any) -> dict[str, int] | None:
+    """Cancel uploads left staged or uploading too long: abort the multipart upload, error the file (U4.3)."""
+    return _sweep("abandoned", self.request.id)

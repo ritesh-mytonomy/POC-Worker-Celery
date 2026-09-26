@@ -33,13 +33,15 @@ class FakeClient:
         self.calls.append(kind)
         if self.error:
             raise self.error
-        return {"reset": 1, "errored": 0, "enqueue_failed": 0} if kind == "stale" else \
-            {"requeued": 2, "errored": 1, "enqueue_failed": 0}
+        return {"stale": {"reset": 1, "errored": 0, "enqueue_failed": 0},
+                "reconcile": {"requeued": 2, "errored": 1, "enqueue_failed": 0},
+                "abandoned": {"cancelled": 3, "abort_failed": 1}}[kind]
 
 
 @pytest.mark.parametrize(("task", "kind", "counts"), [
     ("run_stale_sweep", "stale", {"reset": 1, "errored": 0, "enqueue_failed": 0}),
     ("run_reconcile_sweep", "reconcile", {"requeued": 2, "errored": 1, "enqueue_failed": 0}),
+    ("run_abandoned_sweep", "abandoned", {"cancelled": 3, "abort_failed": 1}),
 ])
 def test_sweep_logs_its_counts(sweepers: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
                                task: str, kind: str, counts: dict[str, int]) -> None:
@@ -54,7 +56,7 @@ def test_sweep_logs_its_counts(sweepers: Any, monkeypatch: pytest.MonkeyPatch, c
 
 @pytest.mark.parametrize("error", [Transient("API 503"), InternalAuthError(401, "invalid_internal_key", "x"),
                                    KeyError("bug")], ids=["Transient", "401", "bug"])
-@pytest.mark.parametrize("task", ["run_stale_sweep", "run_reconcile_sweep"])
+@pytest.mark.parametrize("task", ["run_stale_sweep", "run_reconcile_sweep", "run_abandoned_sweep"])
 def test_failed_sweep_is_logged_and_not_retried(sweepers: Any, monkeypatch: pytest.MonkeyPatch,
                                                 caplog: pytest.LogCaptureFixture, task: str,
                                                 error: BaseException) -> None:

@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app import storage
 from app.logging import get_logger
 from app.tasks_client import enqueue_process_upload
 
@@ -73,3 +74,46 @@ def reconcile_sweep(db: Session, *, reconcile_after_seconds: int, max_attempts: 
     log.info("reconcile_sweep", requeued=len(rows), errored=len(errored), enqueue_failed=failed,
              file_ids=[str(r.file_id) for r in [*rows, *errored]])
     return {"requeued": len(rows), "errored": len(errored), "enqueue_failed": failed}
+
+
+# ── abandoned uploads (upload-ingest-merge U4.3; LLD M2.5's stale-upload sweeper) ──
+
+_ABANDONED_SQL = text("""
+    SELECT file_id, s3_key, upload_id FROM upload_file
+    WHERE status IN ('staged', 'uploading') AND created_at < now() - make_interval(secs => :age)
+    ORDER BY created_at
+    FOR UPDATE SKIP LOCKED""")
+
+_CANCEL_ABANDONED_SQL = text("""
+    UPDATE upload_file SET status = 'error', status_message = 'Upload was not completed', claim_token = NULL,
+                           updated_at = now()
+    WHERE file_id = :id AND status IN ('staged', 'uploading')""")
+
+Abort = Callable[[str, str], None]
+
+
+def abandoned_sweep(db: Session, *, abandon_after_seconds: int, abort: Abort | None = None) -> dict[str, int]:
+    """Cancel uploads left staged or uploading too long: abort the multipart upload, then error the file.
+
+    An abort that finds the upload already gone is not a failure (storage.abort_multipart treats it as done).
+    An abort that fails for another reason leaves that file as it is for the next sweep; the bucket's 1-day
+    AbortIncompleteMultipartUpload rule is the backstop. The rows stay locked until the one commit, so a racing
+    complete waits and then sees the file cancelled; a racing sweep skips them.
+    """
+    abort = abort or storage.abort_multipart
+    rows = db.execute(_ABANDONED_SQL, {"age": abandon_after_seconds}).all()
+    cancelled, failed = [], []
+    for row in rows:
+        if row.upload_id:                # a /poc/seed row has no multipart upload to abort
+            try:
+                abort(row.s3_key, row.upload_id)
+            except Exception as exc:     # S3 down, denied: try again next sweep
+                failed.append(row.file_id)
+                log.warning("abandoned_abort_failed", file_id=str(row.file_id), error=repr(exc))
+                continue
+        db.execute(_CANCEL_ABANDONED_SQL, {"id": row.file_id})
+        cancelled.append(row.file_id)
+    db.commit()
+    log.info("abandoned_sweep", cancelled=len(cancelled), abort_failed=len(failed),
+             file_ids=[str(f) for f in cancelled])
+    return {"cancelled": len(cancelled), "abort_failed": len(failed)}

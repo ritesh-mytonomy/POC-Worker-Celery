@@ -3,12 +3,21 @@ import logging
 import uuid
 from typing import Any
 
+import boto3
 import pytest
+from botocore.config import Config
+from botocore.exceptions import ClientError
+from botocore.stub import Stubber
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from app.repositories.files import release
-from app.services.sweeps import reconcile_sweep, stale_sweep
+from app import storage
+from app.config import get_settings
+from app.db import get_db_session
+from app.main import app
+from app.services.sweeps import abandoned_sweep, reconcile_sweep, stale_sweep
 from tests.db_helpers import (
     MAX_ATTEMPTS, STALE, claimed, full_row, make_file, set_heartbeat_age, set_uploaded_age, triggers_off,
 )
@@ -228,3 +237,106 @@ def test_reconcile_sweep_enqueues_only_after_commit(race_engine: Engine, committ
         reconcile_sweep(db, reconcile_after_seconds=AGE, max_attempts=MAX_ATTEMPTS,
                         enqueue=lambda f, o: seen.append(_read_committed(race_engine, uuid.UUID(f))))
     assert len(seen) == 1 and seen[0]["uploaded_at"] > before
+
+
+# --- abandoned uploads (upload-ingest-merge U4.3) ---
+
+ABANDON = 3600                           # UPLOAD_ABANDON_SECONDS, POC value
+
+
+def upload_row(db: Session, status: str, age: int, upload_id: str | None = "up-1") -> uuid.UUID:
+    """A file in `status`, created `age` seconds ago, with a multipart upload id (or none, like a seeded row)."""
+    file_id = make_file(db, status=status)
+    db.execute(text("UPDATE upload_file SET created_at = now() - make_interval(secs => :age), upload_id = :u, "
+                    "s3_key = :k WHERE file_id = :id"),
+               {"age": age, "u": upload_id and f"{upload_id}-{file_id}", "k": f"ClinSync/incoming/{file_id}",
+                "id": file_id})
+    db.commit()
+    return file_id
+
+
+class Aborts:
+    """A recording abort: optional failures by key."""
+
+    def __init__(self, fail: set[str] | None = None) -> None:
+        """Start with no calls."""
+        self.calls: list[tuple[str, str]] = []
+        self.fail = fail or set()
+
+    def __call__(self, key: str, upload_id: str) -> None:
+        """Record; raise for a key scripted to fail."""
+        self.calls.append((key, upload_id))
+        if key in self.fail:
+            raise ClientError({"Error": {"Code": "InternalError", "Message": "S3 down"}}, "AbortMultipartUpload")
+
+
+def test_abandoned_uploads_are_aborted_then_errored(db_session: Session) -> None:
+    """Old staged and uploading files: multipart aborted, then error "Upload was not completed" (U4.3)."""
+    old = [upload_row(db_session, s, ABANDON + 60) for s in ("staged", "uploading")]
+    aborts = Aborts()
+    assert abandoned_sweep(db_session, abandon_after_seconds=ABANDON, abort=aborts) == \
+        {"cancelled": 2, "abort_failed": 0}
+    assert sorted(aborts.calls) == sorted((f"ClinSync/incoming/{f}", f"up-1-{f}") for f in old)
+    for file_id in old:
+        row = full_row(db_session, file_id)
+        assert (row["status"], row["status_message"], row["claim_token"]) == \
+            ("error", "Upload was not completed", None)
+
+
+def test_fresh_uploads_and_later_statuses_are_untouched(db_session: Session) -> None:
+    """Fresh staged/uploading files, and old files past uploading, are not the sweep's business."""
+    untouched = [upload_row(db_session, "staged", 60), upload_row(db_session, "uploading", 60),
+                 *[upload_row(db_session, s, ABANDON * 2) for s in ("uploaded", "processing", "processed", "error")]]
+    before = [full_row(db_session, f) for f in untouched]
+    aborts = Aborts()
+    assert abandoned_sweep(db_session, abandon_after_seconds=ABANDON, abort=aborts) == \
+        {"cancelled": 0, "abort_failed": 0}
+    assert aborts.calls == [] and [full_row(db_session, f) for f in untouched] == before
+
+
+def test_an_upload_already_gone_from_s3_is_not_a_failure(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real storage.abort_multipart: S3 answering NoSuchUpload (lifecycle already aborted it) → cancelled."""
+    client = boto3.client("s3", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="x",
+                          endpoint_url="http://s3.invalid", config=Config(retries={"total_max_attempts": 1}))
+    monkeypatch.setattr(storage, "internal_client", lambda: client)
+    file_id = upload_row(db_session, "uploading", ABANDON + 60)
+    with Stubber(client) as stub:
+        stub.add_client_error("abort_multipart_upload", service_error_code="NoSuchUpload", http_status_code=404)
+        assert abandoned_sweep(db_session, abandon_after_seconds=ABANDON) == {"cancelled": 1, "abort_failed": 0}
+    assert full_row(db_session, file_id)["status"] == "error"
+
+
+def test_a_failed_abort_leaves_the_file_for_the_next_sweep(db_session: Session) -> None:
+    """S3 down for one file: counted in abort_failed, that row unchanged; the others are still cancelled."""
+    stuck, fine = upload_row(db_session, "uploading", ABANDON + 60), upload_row(db_session, "staged", ABANDON + 60)
+    before = full_row(db_session, stuck)
+    aborts = Aborts(fail={f"ClinSync/incoming/{stuck}"})
+    assert abandoned_sweep(db_session, abandon_after_seconds=ABANDON, abort=aborts) == \
+        {"cancelled": 1, "abort_failed": 1}
+    assert full_row(db_session, stuck) == before and full_row(db_session, fine)["status"] == "error"
+
+
+def test_a_file_without_a_multipart_upload_is_cancelled_without_an_abort(db_session: Session) -> None:
+    """A /poc/seed row that was never confirmed has no upload_id: it is errored, and S3 is not called."""
+    file_id = upload_row(db_session, "staged", ABANDON + 60, upload_id=None)
+    aborts = Aborts()
+    assert abandoned_sweep(db_session, abandon_after_seconds=ABANDON, abort=aborts) == \
+        {"cancelled": 1, "abort_failed": 0}
+    assert aborts.calls == [] and full_row(db_session, file_id)["status"] == "error"
+
+
+def test_abandoned_sweep_route_runs_it_with_the_setting(db_session: Session, monkeypatch: pytest.MonkeyPatch) -> None:
+    """POST /internal/sweeps/abandoned (internal key) → the sweep with UPLOAD_ABANDON_SECONDS; its counts back."""
+    aborts = Aborts()
+    monkeypatch.setattr(storage, "abort_multipart", aborts)
+    file_id = upload_row(db_session, "uploading", get_settings().UPLOAD_ABANDON_SECONDS + 60)
+    upload_row(db_session, "uploading", 60)
+    app.dependency_overrides[get_db_session] = lambda: db_session
+    try:
+        with TestClient(app) as client:
+            response = client.post("/internal/sweeps/abandoned",
+                                   headers={"X-Internal-Key": get_settings().INTERNAL_API_KEY})
+    finally:
+        app.dependency_overrides.clear()
+    assert response.status_code == 200 and response.json() == {"cancelled": 1, "abort_failed": 0}
+    assert len(aborts.calls) == 1 and full_row(db_session, file_id)["status"] == "error"
