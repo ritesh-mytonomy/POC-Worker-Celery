@@ -546,3 +546,11 @@ def test_the_upload_api_is_exactly_anugrahs_kept_endpoints() -> None:
         ("POST", "/api/uploads/parts/presign"), ("GET", "/api/uploads/{upload_id}/parts"),
         ("POST", "/api/uploads/complete"), ("POST", "/api/uploads/abort"), ("GET", "/api/uploads"),
     }
+
+
+def test_check_duplicate_uses_the_shared_name_norm(client: TestClient, db_session: Session) -> None:
+    """A library document "Report.docx" matches "  REPORT.DOCX " of the same size (app.naming.file_name_norm)."""
+    from tests.test_upload_api_contract import add_library_document
+    add_library_document(db_session, "Report.docx", 5000)
+    response = client.post("/api/uploads/check-duplicate", json={"filename": "  REPORT.DOCX ", "fileSize": 5000})
+    assert response.json()["duplicate"] is True

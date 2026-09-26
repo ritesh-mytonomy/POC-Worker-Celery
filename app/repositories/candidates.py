@@ -5,6 +5,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.errors import CandidateIdentityMismatch, ClaimSuperseded, InvalidInput
+from app.naming import title_norm, title_of
+from app.repositories import documents
 from app.repositories.files import batch_exists, truncate_message
 
 CANDIDATE_STATUSES = frozenset({"processed", "rejected"})
@@ -22,14 +24,18 @@ FOR UPDATE
 _UPSERT_SQL = text("""
 INSERT INTO staged_document
   (batch_id, organization_id, source_file_id, source_entry_name, entry_index,
-   file_name, file_ext, size_bytes, content_hash, s3_key, status, reject_reason)
+   file_name, file_ext, size_bytes, content_hash, s3_key, status, reject_reason,
+   proposed_title, title_norm, duplicate_of_document_id, duplicate_kind)
 VALUES
   (:batch_id, :organization_id, :file_id, :source_entry_name, :entry_index,
-   :file_name, :file_ext, :size_bytes, :content_hash, :s3_key, :status, :reject_reason)
+   :file_name, :file_ext, :size_bytes, :content_hash, :s3_key, :status, :reject_reason,
+   :proposed_title, :title_norm, :duplicate_of, :duplicate_kind)
 ON CONFLICT ON CONSTRAINT uq_entry DO UPDATE
 SET status = EXCLUDED.status, s3_key = EXCLUDED.s3_key,
     reject_reason = EXCLUDED.reject_reason, size_bytes = EXCLUDED.size_bytes,
-    content_hash = EXCLUDED.content_hash, updated_at = now()
+    content_hash = EXCLUDED.content_hash, proposed_title = EXCLUDED.proposed_title,
+    title_norm = EXCLUDED.title_norm, duplicate_of_document_id = EXCLUDED.duplicate_of_document_id,
+    duplicate_kind = EXCLUDED.duplicate_kind, updated_at = now()
 RETURNING staged_id, entry_index, file_name, file_ext
 """)
 
@@ -63,12 +69,21 @@ def upsert(session: Session, file_id: uuid.UUID, token: uuid.UUID, *, source_ent
     if parent is None:
         session.rollback()
         raise ClaimSuperseded(file_id)
+    # U6.2 — the title every candidate proposes, and for a processed one, a library document it duplicates:
+    # same content first, then same title. Recomputed on every replay.
+    proposed_title = title_of(file_name)
+    normalized_title = title_norm(proposed_title)
+    duplicate = (documents.find_duplicate(session, parent.organization_id, content_hash, normalized_title)
+                 if status == "processed" else None)
     stored = session.execute(_UPSERT_SQL, {
         "batch_id": parent.batch_id, "organization_id": parent.organization_id, "file_id": file_id,
         "source_entry_name": source_entry_name, "entry_index": entry_index, "file_name": file_name,
         "file_ext": file_ext, "size_bytes": size_bytes, "content_hash": content_hash, "s3_key": s3_key,
         "status": status,
         "reject_reason": truncate_message(reject_reason),
+        "proposed_title": proposed_title, "title_norm": normalized_title,
+        "duplicate_of": duplicate.document_id if duplicate else None,
+        "duplicate_kind": duplicate.kind if duplicate else None,
     }).one()
     # A replay must reproduce the identity columns exactly (they are not overwritten on conflict);
     # a mismatch would orphan the first call's staging object, so undo the overwrite and refuse.

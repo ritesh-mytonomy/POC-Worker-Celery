@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from app.errors import CandidateIdentityMismatch, ClaimSuperseded
 from app.repositories.candidates import upsert
 from app.repositories.files import _CLAIM_SQL, claim, finish, release
-from tests.db_helpers import MAX_ATTEMPTS, STALE, claimed, set_heartbeat_age, triggers_off
+from app.naming import file_name_norm, title_norm
+from tests.db_helpers import MAX_ATTEMPTS, POC_ORG, STALE, claimed, set_heartbeat_age, triggers_off
 
 HASH = "ab" * 32                         # a content_hash: 64 lowercase hex (U5.2)
 
@@ -259,3 +260,71 @@ def test_non_ascii_entry_name_is_stored_exactly(db_session: Session) -> None:
     (row,) = candidates(db_session, file_id)
     assert row["source_entry_name"] == name and row["file_name"] == "Überblick Herz 2026.docx"
     assert row["s3_key"].endswith("0000_Überblick Herz 2026.docx")
+
+
+# --- titles and duplicate marking (upload-ingest-merge U6.2) ---
+
+def library_document(db: Session, title: str, content_hash: str, organization_id: uuid.UUID = POC_ORG) -> uuid.UUID:
+    """A document already in the library."""
+    document_id = uuid.uuid4()
+    if organization_id != POC_ORG:
+        db.execute(text("INSERT INTO organizations (id, name) VALUES (:id, :n)"),
+                   {"id": organization_id, "n": f"other-{organization_id}"})
+    db.execute(text("""
+        INSERT INTO documents (document_id, organization_id, title, title_norm, file_name, file_name_norm, s3_key,
+                               file_ext, size_bytes, content_hash, version_uploaded_by)
+        VALUES (:id, :org, :title, :title_norm, :file, :file_norm, 'k', 'docx', 1, :hash, 0)"""),
+        {"id": document_id, "org": organization_id, "title": title, "title_norm": title_norm(title),
+         "file": f"{title}.docx", "file_norm": file_name_norm(f"{title}.docx"), "hash": content_hash})
+    db.commit()
+    return document_id
+
+
+def test_every_candidate_gets_its_proposed_title_and_title_norm(db_session: Session) -> None:
+    """proposed_title is the file name without extension; title_norm comes from app.naming."""
+    file_id, token = claimed(db_session)
+    upsert(db_session, file_id, token, source_entry_name="docs/Pre-op_Guide (v2).docx", entry_index=0,
+           file_name="Pre-op_Guide (v2).docx", file_ext="docx", **PROCESSED)
+    upsert(db_session, file_id, token, **{**ENTRY, "source_entry_name": "x/Notes.pdf", "entry_index": 1,
+                                          "file_name": "Notes.pdf", "file_ext": "pdf"}, **REJECTED)
+    rows = {r["file_name"]: r for r in candidates(db_session, file_id)}
+    assert (rows["Pre-op_Guide (v2).docx"]["proposed_title"], rows["Pre-op_Guide (v2).docx"]["title_norm"]) == \
+        ("Pre-op_Guide (v2)", "pre op guide v2")
+    assert (rows["Notes.pdf"]["proposed_title"], rows["Notes.pdf"]["title_norm"]) == ("Notes", "notes")
+
+
+@pytest.mark.parametrize(("library", "kind"), [
+    ({"title": "Something else", "hash": HASH}, "same_content"),
+    ({"title": "a", "hash": "cd" * 32}, "same_title"),
+    ({"title": "A", "hash": HASH}, "same_content"),                  # both match: content wins
+])
+def test_a_processed_candidate_is_marked_against_the_library(db_session: Session, library: dict[str, str],
+                                                             kind: str) -> None:
+    """Content first, then title: duplicate_of_document_id and duplicate_kind name the library document."""
+    document_id = library_document(db_session, library["title"], library["hash"])
+    file_id, token = claimed(db_session)
+    upsert(db_session, file_id, token, **ENTRY, **PROCESSED)              # a.docx, HASH
+    (row,) = candidates(db_session, file_id)
+    assert (row["duplicate_of_document_id"], row["duplicate_kind"]) == (document_id, kind)
+
+
+def test_no_marker_without_a_match_for_a_rejected_one_or_across_organizations(db_session: Session) -> None:
+    """Nothing in the library → none; a rejected candidate → none; another organization's document never counts."""
+    library_document(db_session, "a", HASH, organization_id=uuid.uuid4())
+    file_id, token = claimed(db_session)
+    upsert(db_session, file_id, token, **ENTRY, **PROCESSED)
+    upsert(db_session, file_id, token, **{**ENTRY, "source_entry_name": "b.docx", "entry_index": 1,
+                                          "file_name": "b.docx"}, **REJECTED)
+    assert [(r["duplicate_of_document_id"], r["duplicate_kind"]) for r in candidates(db_session, file_id)] == \
+        [(None, None), (None, None)]
+
+
+def test_a_replay_recomputes_the_marker(db_session: Session) -> None:
+    """The library changed between two upserts of the same entry: the replay carries the new marker."""
+    file_id, token = claimed(db_session)
+    upsert(db_session, file_id, token, **ENTRY, **PROCESSED)
+    assert candidates(db_session, file_id)[0]["duplicate_kind"] is None
+    document_id = library_document(db_session, "Other", HASH)
+    upsert(db_session, file_id, token, **ENTRY, **PROCESSED)
+    (row,) = candidates(db_session, file_id)
+    assert (row["duplicate_of_document_id"], row["duplicate_kind"]) == (document_id, "same_content")

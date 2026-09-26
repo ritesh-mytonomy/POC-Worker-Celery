@@ -23,7 +23,7 @@ from app.config import get_settings
 from app.db import get_db_session
 from app.main import app
 from app.models import Document
-from app.repositories.documents import normalize_file_name
+from app.naming import file_name_norm, title_norm, title_of
 from tests.db_helpers import POC_ORG, POC_USER, full_row
 from tests.upload_fakes import FakeStorage, Recorder, enqueued, fake_storage  # noqa: F401 — fixtures
 
@@ -96,9 +96,9 @@ def assert_same_error(response: Any, fx: dict[str, Any]) -> None:
 def add_library_document(db: Session, file_name: str, size_bytes: int) -> None:
     """A document already in the library, for the duplicate cases."""
     document_id = uuid.uuid4()
-    db.add(Document(document_id=document_id, organization_id=POC_ORG, title=file_name.rsplit(".", 1)[0],
-                    title_norm=normalize_file_name(file_name.rsplit(".", 1)[0]), file_name=file_name,
-                    file_name_norm=normalize_file_name(file_name), s3_key=f"ClinSync/processed/x/{document_id}",
+    db.add(Document(document_id=document_id, organization_id=POC_ORG, title=title_of(file_name),
+                    title_norm=title_norm(title_of(file_name)), file_name=file_name,
+                    file_name_norm=file_name_norm(file_name), s3_key=f"ClinSync/processed/x/{document_id}",
                     file_ext=file_name.rsplit(".", 1)[1], size_bytes=size_bytes, content_hash="0" * 64,
                     version_uploaded_by=POC_USER))
     db.flush()

@@ -124,7 +124,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
 
 ## Phase 5 · Duplicates, commit, Library
 
-- [ ] **5.1 Titles and duplicate marking**
+- [x] **5.1 Titles and duplicate marking**
   - At candidate upsert, per `design.md` §6: `proposed_title`, `title_norm`, and `same_content` / `same_title` marking.
   - **Done when:** a candidate matching a library document's hash is marked `same_content`, one matching its title `same_title`, with the document's title available to `…/staged`.
   - _Requirements: U6.2_
