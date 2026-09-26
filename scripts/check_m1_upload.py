@@ -1,4 +1,4 @@
-"""Checkpoint M1 (upload-ingest-merge task 3.6): upload through Anugrah's API exactly as the browser does.
+"""Checkpoints M1 and M2 (upload-ingest-merge tasks 3.6, 5.3): upload → processed → library, as the browser does.
 
 From the host, standard library only, the calls s3ChunkedUpload.ts and UploadQueueContext make:
   check-duplicate → initiate (one client-generated batchId for the whole click, both files IN PARALLEL) →
@@ -7,15 +7,19 @@ From the host, standard library only, the calls s3ChunkedUpload.ts and UploadQue
 Two files: valid.docx (one part) and padded.docx (valid.docx plus a 9 MiB stored media entry — two 8 MiB parts).
 Assert: both land in the one batch, complete answers `uploaded`, every presigned URL names localhost:4566, and each
 file ends `processed` with exactly one candidate, carrying the SHA-256 of its bytes, and its incoming/ object
-gone. Becomes U-S1 in Phase 7.
+gone. M2 then: commit → both in the Library → each downloaded FROM THE HOST through its presigned URL (on
+localhost:4566) with the SHA-256 of what was uploaded → a second commit adds 0 → the same file again gets
+check-duplicate true and initiate 409. Becomes U-S1 in Phase 7.
 
 Usage: python3 scripts/check_m1_upload.py [--keep]
 """
 import hashlib
 import http.client
 import io
+import json
 import os
 import urllib.parse
+import urllib.request
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -54,12 +58,13 @@ def put_part(url: str, data: bytes) -> tuple[int, str | None]:
 
 def main() -> int:
     """Run M1; return the exit code."""
-    s = lib.Scenario("M1 upload through Anugrah's API")
+    s = lib.Scenario("M1+M2 upload through Anugrah's API into the library")
     valid = (lib.ensure_fixtures() / "valid.docx").read_bytes()
     files = {f"m1-{uuid.uuid4().hex[:6]}-valid.docx": valid,
              f"m1-{uuid.uuid4().hex[:6]}-padded.docx": padded_docx(valid)}
     batch_id = str(uuid.uuid4())                                   # one per Upload click (D4)
     keys: list[str] = []
+    document_ids: list[str] = []
     try:
         for name, data in files.items():
             status, body = lib.api("POST", "/api/uploads/check-duplicate", {"filename": name, "fileSize": len(data)})
@@ -114,11 +119,58 @@ def main() -> int:
             f"SELECT file_name || '|' || content_hash FROM staged_document WHERE batch_id = '{batch_id}'").splitlines())
         s.check("each candidate's content_hash is the SHA-256 of the bytes uploaded (U5.2)", stored,
                 {name: hashlib.sha256(data).hexdigest() for name, data in files.items()})
+
+        # ── M2: add to the library, find it there, download it from the host ──
+        status, body = lib.api("GET", f"/api/v1/uploads/batches/{batch_id}")
+        s.check("ready_to_add before the commit", (body["ready_to_add"], body["in_progress"]), (2, 0))
+        status, body = lib.api("POST", f"/api/v1/uploads/batches/{batch_id}/commit")
+        s.check("commit", (status, body["added"], body["skipped"], body["still_in_progress"]), (200, 2, [], 0))
+        document_ids = body["documents"]
+        s.check("batch committed", lib.psql(f"SELECT status FROM upload_batch WHERE batch_id = '{batch_id}'"),
+                "committed")
+        s.check("no candidates left", lib.staged(batch_id), [])
+        s.check("staging emptied after the commit", lib.staging_keys_for_batch(batch_id), [])
+        status, body = lib.api("GET", "/api/v1/library/documents")
+        in_library = {d["file_name"]: d for d in body["documents"] if d["document_id"] in document_ids}
+        s.check("both documents in the library", sorted(in_library), sorted(files))
+        for name, doc in in_library.items():
+            status, link = lib.api("GET", f"/api/v1/library/documents/{doc['document_id']}/download")
+            s.check(f"download URL host {name}", urllib.parse.urlsplit(link["url"]).netloc, "localhost:4566")
+            with urllib.request.urlopen(link["url"], timeout=60) as response:      # from the host, as a browser
+                downloaded = response.read()
+            s.check(f"downloaded SHA-256 {name}", hashlib.sha256(downloaded).hexdigest(),
+                    hashlib.sha256(files[name]).hexdigest())
+        status, body = lib.api("POST", f"/api/v1/uploads/batches/{batch_id}/commit")
+        s.check("a second commit adds nothing", (status, body["added"], body["skipped"]), (200, 0, []))
+
+        # ── M2: the same file again is a duplicate, before it uploads ──
+        name = next(n for n in files if n.endswith("valid.docx"))
+        status, body = lib.api("POST", "/api/uploads/check-duplicate", {"filename": name, "fileSize": len(files[name])})
+        s.check("check-duplicate on re-upload", (status, body["duplicate"], "duplicate" in body["message"].lower()),
+                (200, True, True))
+        status, body = lib.api("POST", "/api/uploads/initiate", {"filename": name, "fileSize": len(files[name]),
+                                                                  "contentType": "application/octet-stream"})
+        s.check("initiate on re-upload", (status, "duplicate" in body["detail"].lower()), (409, True))
         lib.assert_no_undeliverable(s)
     finally:
+        remove_library_documents(s, document_ids, batch_id)
         if lib.api("GET", f"/api/v1/uploads/batches/{batch_id}")[0] == 200:     # created by the first initiate
             lib.cleanup(s, batch_id, keys)
     return s.finish()
+
+
+def remove_library_documents(s: lib.Scenario, document_ids: list[str], batch_id: str) -> None:
+    """Remove the run's library documents, their processed/ objects and the batch's audit rows (unless --keep)."""
+    if s.keep or not document_ids:
+        return
+    ids = ", ".join(f"'{uuid.UUID(d)}'" for d in document_ids)
+    doomed = lib.psql(f"SELECT s3_key FROM documents WHERE document_id IN ({ids})").splitlines()
+    lib.psql(f"DELETE FROM documents WHERE document_id IN ({ids})")
+    lib.psql(f"DELETE FROM audit_log WHERE entity_id = '{uuid.UUID(batch_id)}'")
+    if doomed:
+        batch = {"Objects": [{"Key": k} for k in doomed], "Quiet": True}
+        lib.compose("exec", "-T", "localstack", "awslocal", "s3api", "delete-objects", "--bucket", lib.BUCKET,
+                    "--delete", json.dumps(batch))
 
 
 if __name__ == "__main__":
