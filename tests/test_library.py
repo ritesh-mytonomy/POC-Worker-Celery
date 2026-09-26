@@ -46,6 +46,25 @@ def test_batch_reports_ready_to_add_and_in_progress(client: TestClient, db_sessi
     db_session.commit()
     body = client.get(f"/api/v1/uploads/batches/{batch_id}").json()
     assert (body["ready_to_add"], body["in_progress"]) == (1, 2)
+    assert body["pending_review"] == 3            # ready + rejected + duplicate of the finished file; not busy's
+
+
+def test_pending_review_empties_after_a_commit(client: TestClient, db_session: Session) -> None:
+    """A batch holding only a duplicate and a rejection: ready_to_add 0 but pending_review 2; a commit clears them."""
+    library_document(db_session, "Known", HASH_B)
+    batch_id, file_id = new_file(db_session, status="partial")
+    add_candidate(db_session, file_id, "known again.docx", HASH_B, index=0)
+    add_candidate(db_session, file_id, "notes.pdf", status="rejected", index=1)
+    db_session.execute(text("UPDATE staged_document SET duplicate_of_document_id = "
+                            "(SELECT document_id FROM documents WHERE content_hash = :h), duplicate_kind = "
+                            "'same_content' WHERE source_file_id = :f AND status = 'processed'"),
+                       {"h": HASH_B, "f": file_id})
+    db_session.commit()
+    before = client.get(f"/api/v1/uploads/batches/{batch_id}").json()
+    assert (before["ready_to_add"], before["pending_review"]) == (0, 2)
+    client.post(f"/api/v1/uploads/batches/{batch_id}/commit")
+    after = client.get(f"/api/v1/uploads/batches/{batch_id}").json()
+    assert (after["ready_to_add"], after["pending_review"], after["in_progress"]) == (0, 0, 0)
 
 
 def test_candidates_carry_their_duplicate_marker_with_the_documents_title(client: TestClient,

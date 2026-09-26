@@ -45,11 +45,16 @@ class FileStatusOut(BaseModel):
 
 
 class BatchOut(BaseModel):
-    """A batch and its files, with what Add to library would add now and how many files are still going (U7.1)."""
+    """A batch and its files: what Add to library would add now, everything awaiting review, files still going (U7.1).
+
+    ready_to_add counts processed candidates not marked as duplicates; pending_review counts every candidate of a
+    finished file awaiting commit — duplicates and rejections included, which a commit discards.
+    """
 
     batch_id: uuid.UUID
     files: list[FileStatusOut]
     ready_to_add: int
+    pending_review: int
     in_progress: int
 
 
@@ -90,6 +95,7 @@ def batch_status(batch_id: uuid.UUID, db: Session = Depends(get_db_session)) -> 
         raise ApiError(404, "not_found", f"batch {batch_id} does not exist")
     return BatchOut(batch_id=batch_id, files=[FileStatusOut(**r) for r in rows],
                     ready_to_add=candidates.ready_to_add_count(db, batch_id),
+                    pending_review=candidates.pending_review_count(db, batch_id),
                     in_progress=files.unfinished_count(db, batch_id))
 
 
