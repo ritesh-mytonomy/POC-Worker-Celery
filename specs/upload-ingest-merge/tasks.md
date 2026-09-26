@@ -81,7 +81,7 @@ Every task here keeps the endpoint's contract. Its **Done when** always includes
   - **Done when:** contract tests pass; a pair that doesn't match a row gets 404; a file not `staged` or `uploading` gets 409; the first presign moves `staged` to `uploading`.
   - _Requirements: U2_
 
-- [ ] **3.3 `abort` and `GET /api/uploads`**
+- [x] **3.3 `abort` and `GET /api/uploads`**
   - `abort` sets a `staged` or `uploading` file to `error` — "Upload cancelled" — instead of deleting; for any later status it changes nothing (D15). The list comes from `upload_file`.
   - **Done when:** contract tests pass; an aborted upload's `list_parts` fails; aborting a processed file changes nothing and returns `{"ok": true}`.
   - _Requirements: U4.1, U4.2_

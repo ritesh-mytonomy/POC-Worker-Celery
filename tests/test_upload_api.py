@@ -305,3 +305,74 @@ def test_list_parts_of_an_upload_s3_no_longer_has_is_404(client: TestClient, fak
     fake_storage.uploads.pop(body["uploadId"])
     response = client.get(f"/api/uploads/{body['uploadId']}/parts", params={"key": body["key"]})
     assert response.status_code == 404 and response.json()["detail"].startswith("S3 error (NoSuchUpload): ")
+
+
+# ── 3.3 abort (U4.1, D15) and GET /api/uploads (U4.2) ──────────────────────
+
+def abort(client: TestClient, body: dict[str, Any]) -> Any:
+    """POST abort for an initiate response's key and uploadId."""
+    return client.post("/api/uploads/abort", json={"key": body["key"], "uploadId": body["uploadId"]})
+
+
+@pytest.mark.parametrize("presigned", [False, True], ids=["staged", "uploading"])
+def test_abort_cancels_a_staged_or_uploading_file(client: TestClient, db_session: Session,
+                                                  fake_storage: FakeStorage, presigned: bool) -> None:  # noqa: F811
+    """The multipart upload is aborted and the row ends error "Upload cancelled" — kept, not deleted (D10)."""
+    body = initiate(client).json()
+    if presigned:
+        presign(client, body, [1])
+    assert abort(client, body).json() == {"ok": True}
+    assert body["uploadId"] not in fake_storage.uploads and "abort_multipart" in fake_storage.calls
+    row = db_session.execute(text("SELECT status, status_message FROM upload_file WHERE file_id = :id"),
+                             {"id": body["id"]}).one()
+    assert tuple(row) == ("error", "Upload cancelled")
+
+
+@pytest.mark.parametrize("status", ["uploaded", "processing", "processed", "partial", "rejected", "error"])
+def test_abort_after_the_upload_changes_nothing(client: TestClient, db_session: Session,
+                                                fake_storage: FakeStorage, status: str) -> None:  # noqa: F811
+    """D15: any later status → {"ok": true}, the full row unchanged, no S3 call."""
+    body = initiate(client).json()
+    db_session.execute(text("UPDATE upload_file SET status = :s WHERE file_id = :id"), {"s": status, "id": body["id"]})
+    db_session.commit()
+    before = dict(db_session.execute(text("SELECT * FROM upload_file WHERE file_id = :id"),
+                                     {"id": body["id"]}).mappings().one())
+    calls = list(fake_storage.calls)
+    assert abort(client, body).json() == {"ok": True}
+    after = dict(db_session.execute(text("SELECT * FROM upload_file WHERE file_id = :id"),
+                                    {"id": body["id"]}).mappings().one())
+    assert after == before and fake_storage.calls == calls
+
+
+def test_aborting_twice_is_harmless(client: TestClient, db_session: Session) -> None:
+    """The second abort finds the file cancelled — a later status — and changes nothing."""
+    body = initiate(client).json()
+    assert abort(client, body).json() == abort(client, body).json() == {"ok": True}
+    assert status_of(db_session, body) == "error"
+
+
+def test_a_failed_s3_abort_leaves_the_file_as_it_was(client: TestClient, db_session: Session,
+                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """S3 refusing the abort → 502 with Anugrah's text, and the file is still uploading, so it can be retried."""
+    body = initiate(client).json()
+    presign(client, body, [1])
+
+    def refused(*_: Any) -> None:
+        raise ClientError({"Error": {"Code": "InternalError", "Message": "try later"}}, "AbortMultipartUpload")
+
+    monkeypatch.setattr(storage, "abort_multipart", refused)
+    response = abort(client, body)
+    assert response.status_code == 502 and response.json() == {"detail": "S3 error (InternalError): try later"}
+    assert status_of(db_session, body) == "uploading"
+
+
+def test_list_hides_files_still_uploading(client: TestClient, db_session: Session) -> None:
+    """GET /api/uploads lists files past uploading, as Anugrah's hid `initiated`; nulls where the LLD has no column."""
+    staged, uploading, done = (initiate(client, f"{n}.docx").json() for n in ("staged", "uploading", "done"))
+    presign(client, uploading, [1])
+    db_session.execute(text("UPDATE upload_file SET status = 'processed' WHERE file_id = :id"), {"id": done["id"]})
+    db_session.commit()
+    (item,) = client.get("/api/uploads").json()
+    assert (item["id"], item["filename"], item["status"], item["s3_key"]) == \
+        (done["id"], "done.docx", "processed", done["key"])
+    assert (item["s3_location"], item["parent_id"], item["source_path"]) == (None, None, None)

@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -23,7 +24,7 @@ from app.db import get_db_session
 from app.main import app
 from app.models import Document
 from app.repositories.documents import normalize_file_name
-from tests.db_helpers import POC_ORG, POC_USER
+from tests.db_helpers import POC_ORG, POC_USER, full_row
 from tests.upload_fakes import FakeStorage, Recorder, enqueued, fake_storage  # noqa: F401 — fixtures
 
 FIXTURES = Path(__file__).parent / "fixtures" / "upload_api"
@@ -32,6 +33,8 @@ FIXTURES = Path(__file__).parent / "fixtures" / "upload_api"
 INTENDED = {
     "check_duplicate__true": "U6.1 — the match is against library documents",
     "initiate__409_duplicate": "U1.4 — the match is against library documents",
+    "abort__200_unknown_pair": "U4.1 / U2.2 — a pair matching no row is 404 (the client ignores abort's answer)",
+    "list_parts__404_after_abort": "U2.2 — the row check comes first: an aborted file is 409, still a failure",
 }
 
 
@@ -173,3 +176,56 @@ def test_list_parts(client: TestClient, fake_storage: FakeStorage) -> None:  # n
     for item in body["parts"]:
         assert set(fx["response"]["body"]["parts"][0]) == set(item)
     assert [p["partNumber"] for p in body["parts"]] == [1, 2]
+
+
+# ── 3.3 abort and the upload list ──────────────────────────────────────────
+
+def set_status(db: Session, file_id: str, status: str) -> None:
+    """Move a file on, as the worker would."""
+    db.execute(text("UPDATE upload_file SET status = :s WHERE file_id = :id"), {"s": status, "id": file_id})
+    db.commit()
+
+
+def test_abort(client: TestClient, db_session: Session) -> None:
+    """Mid-upload abort → exactly the fixture body {"ok": true}; the file ends error "Upload cancelled"."""
+    ids = initiated(client)
+    response, fx = send(client, "abort", key=ids["key"], uploadId=ids["uploadId"])
+    assert response.status_code == 200 and response.json() == fx["response"]["body"]
+    row = full_row(db_session, uuid.UUID(ids["id"]))
+    assert (row["status"], row["status_message"]) == ("error", "Upload cancelled")
+
+
+def test_abort__200_unknown_pair(client: TestClient) -> None:
+    """INTENDED (U4.1): Anugrah answered ok for any pair; now a pair matching no row is 404, with the detail body."""
+    response, fx = send(client, "abort__200_unknown_pair")
+    assert response.status_code == 404 and response.json() == {"detail": "Upload not found."}
+
+
+def test_abort__200_completed_file(client: TestClient, db_session: Session) -> None:
+    """What the client sends when a finished row is removed: {"ok": true}, and the file is untouched (D15)."""
+    ids = initiated(client)
+    set_status(db_session, ids["id"], "processed")
+    before = full_row(db_session, uuid.UUID(ids["id"]))
+    response, fx = send(client, "abort__200_completed_file", key=ids["key"], uploadId=ids["uploadId"])
+    assert response.status_code == 200 and response.json() == fx["response"]["body"]
+    assert full_row(db_session, uuid.UUID(ids["id"])) == before
+
+
+def test_list_parts__404_after_abort(client: TestClient) -> None:
+    """INTENDED (U2.2): after abort the row check refuses first — 409, still a failure, with the detail body."""
+    ids = initiated(client)
+    send(client, "abort", key=ids["key"], uploadId=ids["uploadId"])
+    path = f"/api/uploads/{ids['uploadId']}/parts?key={quote(ids['key'], safe='')}"
+    response, _ = send(client, "list_parts__404_after_abort", path=path)
+    assert response.status_code == 409 and response.json() == {"detail": "Upload is not awaiting completion."}
+
+
+def test_list_uploads(client: TestClient, db_session: Session) -> None:
+    """Every fixture field on every item; uploads past `uploading` only, newest first."""
+    first, second = initiated(client), initiated(client)
+    set_status(db_session, first["id"], "processed")
+    set_status(db_session, second["id"], "uploaded")
+    response, fx = send(client, "list_uploads")
+    body = assert_success_fields(response, fx)
+    assert [item["id"] for item in body] == [second["id"], first["id"]]
+    assert set(fx["response"]["body"][0]) == set(body[0])

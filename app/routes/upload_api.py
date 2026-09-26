@@ -6,6 +6,7 @@ Errors keep FastAPI's {"detail": "…"} body (D14) — routes/errors.py chooses 
 """
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from typing import TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -126,3 +127,40 @@ def list_parts(upload_id: str, key: str, db: Session = Depends(get_db_session)) 
     """Parts already in S3, for resuming after a refresh (U2.1)."""
     return ListPartsResponse(parts=[UploadedPart(**p) for p in
                                     _answer(lambda: uploads.parts(db, key=key, upload_id=upload_id))])
+
+
+# ── abort and the upload list ───────────────────────────────────────────────
+
+class AbortRequest(BaseModel):
+    """Anugrah's body: which multipart upload."""
+
+    key: str
+    uploadId: str
+
+
+@router.post("/abort")
+def abort(body: AbortRequest, db: Session = Depends(get_db_session)) -> dict[str, bool]:
+    """Cancel a staged or uploading file; for a later status, change nothing (D15). Always {"ok": true}."""
+    _answer(lambda: uploads.abort(db, key=body.key, upload_id=body.uploadId))
+    return {"ok": True}
+
+
+class UploadRecordResponse(BaseModel):
+    """One upload, in Anugrah's list shape."""
+
+    id: str
+    filename: str
+    size_bytes: int
+    content_type: str | None
+    s3_key: str
+    s3_location: str | None
+    status: str
+    parent_id: str | None = None
+    source_path: str | None = None
+    created_at: datetime
+
+
+@router.get("", response_model=list[UploadRecordResponse])
+def list_uploads(db: Session = Depends(get_db_session)) -> list[UploadRecordResponse]:
+    """The organization's uploads past `uploading`, newest first (U4.2)."""
+    return [UploadRecordResponse(**r) for r in _answer(lambda: uploads.list_uploads(db))]

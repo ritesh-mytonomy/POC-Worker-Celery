@@ -174,3 +174,39 @@ def parts(db: Session, *, key: str, upload_id: str) -> list[dict[str, Any]]:
         return _s3(storage.list_parts, row.s3_key, row.upload_id)
     except storage.NoSuchUpload as exc:
         raise UploadRefused(404, f"S3 error ({exc.code or 'NoSuchUpload'}): {exc}") from exc
+
+
+def abort(db: Session, *, key: str, upload_id: str) -> None:
+    """Cancel a staged or uploading file: abort its multipart upload, end it `error` "Upload cancelled" (U4.1).
+
+    Any later status is left exactly as it is (D15): the client also sends abort when a finished row is removed.
+    The row lock makes a racing complete either finish first (abort is then a no-op) or see the file cancelled.
+    """
+    row = files.find_by_upload(db, upload_id, key, lock=True)
+    if row is None:
+        db.rollback()
+        raise UploadRefused(404, "Upload not found.")
+    if row.status not in ("staged", "uploading"):
+        db.rollback()
+        log.info("abort_ignored", file_id=str(row.file_id), status=row.status)
+        return
+    try:
+        _s3(storage.abort_multipart, row.s3_key, row.upload_id)
+    except UploadRefused:
+        db.rollback()                    # S3 still has the upload: leave the file as it was
+        raise
+    files.cancel_upload(db, row.file_id)
+    db.commit()
+    log.info("upload_cancelled", file_id=str(row.file_id), batch_id=str(row.batch_id))
+
+
+def list_uploads(db: Session) -> list[dict[str, Any]]:
+    """Uploads past `uploading`, newest first, in Anugrah's GET /api/uploads shape (U4.2).
+
+    s3_location, parent_id and source_path have no LLD column and merged uploads have no parent: they are null.
+    """
+    rows = files.list_uploads(db, _organization())
+    db.rollback()
+    return [{"id": str(r["file_id"]), "filename": r["file_name"], "size_bytes": r["size_bytes"],
+             "content_type": r["content_type"], "s3_key": r["s3_key"], "s3_location": None, "status": r["status"],
+             "parent_id": None, "source_path": None, "created_at": r["created_at"]} for r in rows]

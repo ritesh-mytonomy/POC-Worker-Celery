@@ -319,3 +319,20 @@ def mark_uploading(session: Session, file_id: uuid.UUID) -> None:
     session.execute(text("UPDATE upload_file SET status = 'uploading', updated_at = now() "
                          "WHERE file_id = :id AND status = 'staged'"), {"id": file_id})
     session.commit()
+
+
+def cancel_upload(session: Session, file_id: uuid.UUID) -> None:
+    """A staged or uploading file ends `error` "Upload cancelled" (U4.1, D10). The caller holds the row lock."""
+    session.execute(text("""
+        UPDATE upload_file SET status = 'error', status_message = 'Upload cancelled', claim_token = NULL,
+                               updated_at = now()
+        WHERE file_id = :id AND status IN ('staged', 'uploading')"""), {"id": file_id})
+
+
+def list_uploads(session: Session, organization_id: uuid.UUID) -> list[dict[str, object]]:
+    """The organization's uploads past `uploading`, newest first, for GET /api/uploads (U4.2)."""
+    rows = session.execute(text("""
+        SELECT file_id, file_name, size_bytes, content_type, s3_key, status, created_at FROM upload_file
+        WHERE organization_id = :org AND status NOT IN ('staged', 'uploading')
+        ORDER BY created_at DESC, file_id"""), {"org": organization_id}).mappings()
+    return [dict(r) for r in rows]
