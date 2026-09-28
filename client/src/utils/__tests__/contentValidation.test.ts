@@ -55,7 +55,7 @@ describe('the zip check (D16)', () => {
     expect(result.errors).toEqual([]);
     expect(result.warnings).toEqual([
       'notes.pdf: .pdf is not supported inside a ZIP.',
-      'x/y/deep.docx: File is nested more than one subfolder deep.',
+      'x/y/deep.docx: Folders nested too deeply — at most one subfolder is supported',
     ]);
   });
 

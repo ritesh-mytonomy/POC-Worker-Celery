@@ -159,7 +159,7 @@ async function validateZipBuffer(file: File, config: UploadConfig): Promise<File
         path: entry.name,
         fileName,
         valid: false,
-        error: 'File is nested more than one subfolder deep.',
+        error: 'Folders nested too deeply — at most one subfolder is supported', // the worker's reject reason, word for word
       });
       continue;
     }

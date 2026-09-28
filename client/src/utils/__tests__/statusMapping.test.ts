@@ -18,7 +18,7 @@ describe('mapServerStatus (design.md §3)', () => {
   it('shows Checking…, with entry progress for an archive', () => {
     expect(mapServerStatus(file('uploaded'))).toEqual({ label: 'Checking…', tone: 'progress' });
     expect(mapServerStatus(file('processing', { entries_total: 30, entries_done: 12 }))).toEqual({
-      label: 'Checking… 12 of 30',
+      label: 'Checking… — 12 of 30',
       tone: 'progress',
     });
   });

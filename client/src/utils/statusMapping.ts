@@ -33,7 +33,7 @@ export function mapServerStatus(file: ServerFileStatus, counts?: FileCandidateCo
     case 'processing':
       return {
         label: file.entries_total
-          ? `Checking… ${file.entries_done} of ${file.entries_total}`
+          ? `Checking… — ${file.entries_done} of ${file.entries_total}`
           : 'Checking…',
         tone: 'progress',
       };

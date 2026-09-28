@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Feature** | `upload-ingest-merge` · revision 1.3 |
+| **Feature** | `upload-ingest-merge` · revision 1.4 |
 | **Implements** | `requirements.md` U1–U11, UN-1–7 |
 | **Builds on** | Ingest Worker POC after `refactor/workers-tidy` — `engine/file_checks.py`, `workers/tasks.py`, `workers/clients.py`, `poc/main.py`, `poc/worker.py` |
 
@@ -123,7 +123,10 @@ The schema is **`schema.sql`**, in this folder. It implements the LLD's M1 `orga
 | `stored`, `extracted` | `processed` | Ready |
 | — | `partial` | Partly ready — *27 of 30* |
 | `extract_failed` | `rejected` / `error` | Rejected — *reason* / Failed — *message* |
+| — | `error` on an archive that staged entries first | Failed part-way — *N staged* (its staged entries stay committable — Decision 1) |
 | *(row deleted on abort)* | `error`, "Upload cancelled" | Cancelled |
+
+The *N of M* counts come from the batch's candidates. A commit deletes the candidates, so the Client keeps each file's last known counts, and the row still reads *Partly ready — 27 of 30* afterwards.
 
 ## 4. The API's S3 module — `app/storage.py`
 
@@ -174,7 +177,7 @@ Paths and request bodies **exactly as in `upload_routes.py` today**. Task 0.2 re
 
 | Endpoint | Response |
 |---|---|
-| `GET /api/v1/uploads/batches/{id}` | Existing Ingest route, **+** `ready_to_add`, `in_progress` counts |
+| `GET /api/v1/uploads/batches/{id}` | Existing Ingest route, **+** `ready_to_add`, `pending_review`, `in_progress` counts. `pending_review` is every candidate of a finished file awaiting commit — ready, duplicate-marked and rejected alike (Decision 2); it drives **Done** when nothing is ready to add |
 | `GET /api/v1/uploads/batches/{id}/staged` | Existing, **+** `content_hash`, `duplicate_of: {document_id, title, kind}?`. Added candidates are no longer listed — deleted on commit (D12) |
 | `POST /api/v1/uploads/batches/{id}/commit` | `{added, skipped: [{staged_id, file_name, reason}], still_in_progress, documents: [document_id]}` |
 | `GET /api/v1/library/documents` | `{documents: [{document_id, title, file_name, file_ext, size_bytes, created_at}], total}` |
@@ -231,7 +234,9 @@ def commit(db, batch_id):
         removed_keys.append(c.s3_key)
         candidates.delete(db, c)                                 # D12 — the library row is the record
     audit.write(db, "batch_committed", "upload_batch", batch_id,
-                {"added": [d.document_id for d in added], "skipped": len(skipped)})
+                {"added": [d.document_id for d in added],
+                 "skipped": [{"staged_id": c.staged_id, "reason": r} for c, r in skipped],
+                 "still_in_progress": batches.in_progress_count(db, batch_id)})
     if batches.all_files_finished(db, batch_id) and not candidates.any_left(db, batch_id):
         batch.status = "committed"
     db.commit()
@@ -281,7 +286,7 @@ Ported from `Client/` into `client/`. **The upload mechanics stay — chunking, 
 | `pages/content-library/ContentLibraryPage.tsx` | Generates one `batchId` (`crypto.randomUUID()`) per **Upload** click and passes it to every `startCloudUpload` of that click (D4); format text from the allowed types; hosts the review panel and the Library table |
 | `context/UploadQueueContext.tsx` | Carries the click's `batchId` into each uploader; abort behaviour in line with D15; joins batch statuses to rows by file id (`complete`'s `id`) |
 | `components/ui/uploadFile/*` | Status labels per the mapping in §3, fed from the batch poll |
-| `utils/contentValidation.ts` | Allowed types from one setting matching `ALLOWED_TOP_LEVEL_EXT`; others shown disabled. **Zip check (D16):** entries against `ALLOWED_ZIP_ENTRY_EXT`; an entry is usable if its extension is allowed, it is not a Mac or hidden file, it is at most `MAX_ZIP_FOLDER_DEPTH` folders deep, and it is not empty. Unusable entries are warnings; the zip is blocked only when no entry is usable |
+| `utils/contentValidation.ts` | Allowed types, zip entry types and depth from `GET /api/v1/uploads/config` — the one source of truth, the server's `ALLOWED_TOP_LEVEL_EXT`, `ALLOWED_ZIP_ENTRY_EXT`, `MAX_ZIP_FOLDER_DEPTH`, `MAX_UPLOAD_BYTES`. Only allowed types are listed and offered by the file picker (`accept`); another type dropped anyway shows as not supported. **Zip check (D16):** `__MACOSX/` entries and hidden files are skipped **silently**, as the worker skips them. An entry of a type outside `ALLOWED_ZIP_ENTRY_EXT`, or deeper than `MAX_ZIP_FOLDER_DEPTH`, is a **warning**, in the worker's words ("Folders nested too deeply — at most one subfolder is supported"). Empty entries are left to the worker, which rejects them with a reason. The zip is blocked only when no entry is usable |
 | Login, shell, routes, dashboard | Unchanged — auth is out of scope |
 | **New** `hooks/useBatchStatus.ts` | Polls `GET /api/v1/uploads/batches/{id}` every 2 s after the first `complete` |
 | **New** batch review panel | Candidates — ready, rejected with reason, already in the library — and **Add *N* to library**; afterwards, what was added and skipped |
