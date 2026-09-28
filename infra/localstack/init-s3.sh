@@ -32,6 +32,8 @@ awslocal s3api put-bucket-lifecycle-configuration \
   }'
 # The browser PUTs parts straight to S3 and must read each part's ETag to complete the upload: without ETag in
 # ExposeHeaders the XHR sees no ETag and s3ChunkedUpload.ts fails the part.
+# The second rule lets the LocalStack web app's resource browser (https://app.localstack.cloud, which calls this
+# instance from the developer's browser) list and download objects — read-only, dev tooling only.
 awslocal s3api put-bucket-cors \
   --bucket "${BUCKET}" \
   --cors-configuration '{
@@ -41,6 +43,12 @@ awslocal s3api put-bucket-cors \
         "AllowedMethods": ["PUT", "GET", "HEAD"],
         "AllowedHeaders": ["*"],
         "ExposeHeaders": ["ETag"],
+        "MaxAgeSeconds": 3000
+      },
+      {
+        "AllowedOrigins": ["https://app.localstack.cloud"],
+        "AllowedMethods": ["GET", "HEAD"],
+        "AllowedHeaders": ["*"],
         "MaxAgeSeconds": 3000
       }
     ]

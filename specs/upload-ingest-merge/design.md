@@ -138,7 +138,7 @@ The API needs S3 for multipart set-up, presigning, completion, the commit copy a
 
 In AWS both are unset and resolve to real S3. SigV4 and path-style addressing for LocalStack, as in Anugrah's `s3_storage.py`.
 
-**Bucket set-up** in `init-s3.sh`: CORS for `http://localhost:5173` with **`ExposeHeaders: ["ETag"]`** — without it the browser can't read part ETags — plus `AbortIncompleteMultipartUpload` after 1 day, alongside the existing `incoming/` and `staging/` rules. Anugrah's app set CORS at API startup; here it moves to the bucket's init script, like the other bucket rules.
+**Bucket set-up** in `init-s3.sh`: CORS for `http://localhost:5173` with **`ExposeHeaders: ["ETag"]`** — without it the browser can't read part ETags — and a second, read-only rule (GET, HEAD) for `https://app.localstack.cloud`, so the LocalStack web app's resource browser can list and download objects (dev tooling only), plus `AbortIncompleteMultipartUpload` after 1 day, alongside the existing `incoming/` and `staging/` rules. Anugrah's app set CORS at API startup; here it moves to the bucket's init script, like the other bucket rules.
 
 ---
 
@@ -297,7 +297,7 @@ Anugrah's `VITE_SCAN_API_URL` stays as the Client's API base URL — renaming it
 | Setting | POC | Notes |
 |---|---|---|
 | `S3_PUBLIC_ENDPOINT_URL` | `http://localhost:4566` | Host for presigned URLs; unset in AWS |
-| `CORS_ORIGINS` | `http://localhost:5173` | API and bucket |
+| `CORS_ORIGINS` | `http://localhost:5173` | API and bucket (the bucket also allows `https://app.localstack.cloud` read-only, for the LocalStack web app) |
 | `UPLOAD_PART_SIZE_BYTES` | 8 MiB | Anugrah's default; ≥ 5 MiB, startup-validated |
 | `MAX_UPLOAD_BYTES` | 5 GiB | Anugrah's limit |
 | `PRESIGN_EXPIRES_SECONDS` | 3600 | Anugrah's default |

@@ -5,7 +5,8 @@
 # LocalStack checks signatures here (S3_SKIP_SIGNATURE_VALIDATION=0), so two negative PUTs prove the host is signed:
 # a tampered signature and the same URL on another host (127.0.0.1) must both be refused.
 # Task 2.2: the bucket's CORS rule answers a real preflight from http://localhost:5173 (allowing PUT, exposing ETag),
-# refuses one from another origin, and the part PUT's response exposes ETag to the page.
+# refuses one from another origin, and the part PUT's response exposes ETag to the page. The LocalStack web app
+# (https://app.localstack.cloud) may list and download (GET) but not PUT.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 KEY="ClinSync/incoming/presign-check-$$/part.bin"
@@ -46,6 +47,12 @@ check "PUT allowed" "$(echo "$PREFLIGHT" | grep -i '^access-control-allow-method
 check "ETag exposed" "$(echo "$PREFLIGHT" | grep -i '^access-control-expose-headers:' | cut -d' ' -f2-)" "ETag"
 check "preflight from another origin" "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$URL" \
   -H "Origin: http://evil.example" -H "Access-Control-Request-Method: PUT")" 403
+PORTAL="https://app.localstack.cloud"
+check "LocalStack web app: list preflight" "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS \
+  "http://localhost:4566/clinsync-poc?list-type=2" -H "Origin: $PORTAL" -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: authorization,x-amz-date,x-amz-content-sha256")" 200
+check "LocalStack web app: PUT refused" "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS "$URL" \
+  -H "Origin: $PORTAL" -H "Access-Control-Request-Method: PUT")" 403
 
 # curl -T sends a PUT with no Content-Type, like the browser's XHR in s3ChunkedUpload.ts
 CODE=$(curl -s -D "$TMP/headers" -o /dev/null -w '%{http_code}' -T "$TMP/part.bin" \
