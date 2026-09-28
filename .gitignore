@@ -13,10 +13,10 @@ htmlcov/
 .env
 
 # Generated fixtures
-fixtures/out/
+backend/fixtures/out/
 
 # Scenario runner output
-run_logs/
+backend/run_logs/
 
 # The Upload POC source, kept here only as read-only reference (a separate git repo)
 File Upload source code/

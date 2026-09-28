@@ -37,12 +37,12 @@ Stop with `docker compose down`; `docker compose down -v` also wipes the databas
 ## Run everything
 
 ```bash
-./scripts/run_all.sh
+./backend/scripts/run_all.sh
 ```
 
 From a clean stack (`down -v`, `up --build --wait`, fixtures regenerated) it runs S1–S8, S5b, the three check scripts
 and the NFR timing checks — 13 entries, about 16 minutes — and prints a pass/fail table. Each script's output goes
-to `run_logs/<name>.log`. It blocks system sleep while it runs (`systemd-inhibit`): a suspended laptop stalls
+to `backend/run_logs/<name>.log`. It blocks system sleep while it runs (`systemd-inhibit`): a suspended laptop stalls
 every scenario.
 
 Every scenario asserts, before it exits, that Kombu's dead-letter list `ae.undeliver` is empty, that no candidate
@@ -50,7 +50,7 @@ is duplicated (NFR-5) and that no file of its batch is left non-terminal (NFR-6)
 
 | Script | What it proves |
 |---|---|
-| `scenario_s1.py` | Mixed archive → `partial`: 3 staged, 2 rejected with reasons |
+| `scenario_s1.py` | Mixed archive → `partial`: 4 staged (3 `.docx` and a `.pdf`), `readme.txt` rejected with its reason |
 | `scenario_s2.py` / `scenario_s3.py` | A valid `.docx` is staged; renamed files are rejected by content |
 | `scenario_s4.py` | Never more than `INGEST_CONCURRENCY` files processing at once |
 | `scenario_s5.py` | **The demo:** kill the worker container mid-archive; it resumes at the kill point |
@@ -63,7 +63,8 @@ is duplicated (NFR-5) and that no file of its batch is left non-terminal (NFR-6)
 | `check_retry.py` | S3 out for 15 s → retried and processed; S3 out for good → `error` after 3 attempts |
 | `check_nfr.py` | Confirm latency, confirm-to-claim, 100-entry archive timings (measured values printed) |
 
-Any script runs on its own against a running stack, e.g. `python3 scripts/scenario_s5.py`. Options:
+Scenarios live in `backend/scripts/scenarios/` and checks in `backend/scripts/checks/`. Any of them runs on its own
+against a running stack, from `backend/`: e.g. `cd backend && python3 -m scripts.scenarios.scenario_s5`. Options:
 
 - **`--keep`** — skip the cleanup at the end, leaving the batch rows and S3 objects in place for inspection.
 - `scenario_s5.py --wait-visibility` — also wait (~5 min) for the killed task's original message to come back after
@@ -72,7 +73,7 @@ Any script runs on its own against a running stack, e.g. `python3 scripts/scenar
 ## Tests
 
 ```bash
-docker compose run --rm --no-deps api pytest tests/
+docker compose run --rm --no-deps api pytest tests/     # runs in backend/ inside the image
 ```
 
 About 700 tests. The run needs the compose Postgres and Redis for the integration tests (they skip if unreachable;
@@ -80,11 +81,11 @@ set `REQUIRE_DB=1` to make them fail instead). Tests use their own database, `cl
 from the same `init.sql` when its volume is first initialised (`infra/postgres/test_db.sh`); the running stack uses
 only `clinsync`, so its sweepers never touch test rows and the suite can run with the whole stack up. A volume
 created before this existed needs `docker compose down -v` once. A coverage gate for `engine/` and `workers/` (`--cov-fail-under=80`,
-currently ~97 %) is part of `pytest.ini`, so **partial runs add `--no-cov`**:
+currently ~97 %) is part of `backend/pytest.ini`, so **partial runs add `--no-cov`**:
 
 ```bash
 # the engine alone, nothing running, no network:
-docker run --rm --network none clinsync-ingest-poc:dev pytest tests/test_engine*.py --no-cov
+docker run --rm --network none clinsync-ingest-poc:dev pytest tests/engine/ --no-cov
 ```
 
 ## The seven services
@@ -129,15 +130,21 @@ Batch progress is also visible without logs: `curl -s localhost:8000/api/v1/uplo
 ## Layout
 
 ```
-app/        FastAPI app: routes, services, repositories (SQL), settings, JSON logging, producer-only Celery client
-workers/    tasks.py: the Celery app, the heartbeat, process_upload, the sweeper tasks
-            clients.py: the Internal API client and the S3 store, each with its error mapping (and Transient)
-engine/     file_checks.py: pure functions — limits, file-type detection, archive guards, streaming extraction
-poc/        POC-only: main.py (the api entry point: app.main:app + /poc/*), worker.py (worker-scan's entry point:
-            workers.tasks + the scan stub). Depends on app/ and workers/; nothing depends on it, so it can be deleted.
-infra/      postgres/init.sql, localstack/init-s3.sh
-fixtures/   make_fixtures.py builds every test file into fixtures/out/
-scripts/    scenario scripts, check scripts, run_all.sh
-tests/      unit and integration tests
-docs/       findings note, demo runbook, running findings list
+backend/                one Python image (backend/Dockerfile) for the api, the workers and the POC wrappers
+  api/                  FastAPI: routes (internal, uploads, multipart, library), services, repositories (SQL),
+                        storage (S3), task_producer (producer-only Celery client), error handlers, models
+  workers/              tasks.py: the Celery app, the heartbeat, process_upload, the sweeper tasks
+                        clients.py: the Internal API client and the S3 store, each with its error mapping (and Transient)
+  engine/               file_checks.py: pure functions — limits, file-type detection, archive guards, streaming extraction
+  shared/               config, constants (queue and task names), errors, JSON logging — used by api and workers
+  poc/                  POC-only: main.py (the api entry point: api.main:app + /poc/*), worker.py (worker-scan's entry
+                        point: workers.tasks + the scan stub). Nothing depends on it, so it can be deleted.
+  fixtures/             make_fixtures.py builds every test file into backend/fixtures/out/
+  scripts/              lib.py, run_all.sh, scenarios/ (S1–S8), checks/
+  tests/                api/, workers/, engine/, shared/, poc/, scripts/ — plus the shared conftest and helpers
+frontend/               the React client (Anugrah's, ported), served by Vite on 127.0.0.1:5173
+infra/                  postgres/init.sql and test_db.sh, localstack/init-s3.sh
+specs/                  the specs: ingest-worker-poc (the original POC), upload-ingest-merge (current)
+docs/                   findings note, demo runbook, running findings list
+docker-compose.yml      every service; docker-compose.entry-delay.yml is the scenario override for S5/S5b
 ```

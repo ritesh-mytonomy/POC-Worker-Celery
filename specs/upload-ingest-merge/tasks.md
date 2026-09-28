@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Feature** | `upload-ingest-merge` · revision 1.4 |
+| **Feature** | `upload-ingest-merge` · revision 1.5 |
 | **Read first** | `requirements.md` · `design.md` |
 | **Convention** | Same as the Ingest POC: each task names its requirements and ends with a **Done when**. When it holds: tick the box, commit only after the full suite has passed, push, stop. Branch: `feature/upload-merge`. |
 | **Schema** | `schema.sql` in this folder — the LLD's tables. It replaces `infra/postgres/init.sql` in task 1.1 |

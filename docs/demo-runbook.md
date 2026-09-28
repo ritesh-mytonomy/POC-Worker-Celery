@@ -19,8 +19,8 @@ duplicated. Then the same with only one worker process killed (the container sta
    docker compose up -d --build --wait
    docker compose ps          # 7 services; api, postgres, redis, localstack "healthy"
    ```
-3. **Smoke test** (30 s; also builds the fixtures if needed): `python3 scripts/scenario_s6.py` → `PASSED`.
-4. **Have a known-good run to fall back on:** `python3 scripts/scenario_s5.py | tee /tmp/s5-good.txt`
+3. **Smoke test** (30 s; also builds the fixtures if needed): `cd backend && python3 -m scripts.scenarios.scenario_s6` → `PASSED`.
+4. **Have a known-good run to fall back on:** `cd backend && python3 -m scripts.scenarios.scenario_s5 | tee /tmp/s5-good.txt`
    (2 minutes). If anything misbehaves live, this output tells the same story.
 5. Make the font big. Arrange four terminals as below, all in the repo directory.
 
@@ -59,7 +59,7 @@ docker compose logs -f --no-log-prefix --since 1s api \
 
 **T1:**
 ```bash
-python3 scripts/scenario_s5.py
+cd backend && python3 -m scripts.scenarios.scenario_s5
 ```
 
 The script restarts `worker-ingest` with the 2-second delay, uploads `big30.zip`, confirms it, waits for document 10,
@@ -90,7 +90,7 @@ duplicates, no orphans."
 
 **T1:**
 ```bash
-python3 scripts/scenario_s5b.py
+cd backend && python3 -m scripts.scenarios.scenario_s5b
 ```
 
 | Time | What happens | Point at |
@@ -134,4 +134,4 @@ processed at +96.2 s; T4 showed exactly one `stale_sweep reset: 1`, at the secon
 ## After the demo
 
 Nothing to clean up: each script deletes its batch and S3 objects and restores the normal `worker-ingest`. Stop the
-terminals with Ctrl-C. To show everything else, `./scripts/run_all.sh` (about 16 minutes; 13 entries).
+terminals with Ctrl-C. To show everything else, `./backend/scripts/run_all.sh` (about 16 minutes; 13 entries).

@@ -1,7 +1,9 @@
 name: clinsync-ingest-poc
 
 x-app: &app
-  build: .
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
   image: clinsync-ingest-poc:dev
   env_file:
     - path: .env
@@ -100,9 +102,9 @@ services:
     command: celery -A workers.tasks worker -Q clinsync.maintenance -c 1 -B -n maint@%h
 
   # The browser client (Anugrah's React app, ported — upload-ingest-merge Phase 6), served by Vite.
-  client:
-    build: ./client
-    image: clinsync-ingest-poc-client:dev
+  frontend:
+    build: ./frontend
+    image: clinsync-ingest-poc-frontend:dev
     environment:
       # Read by the BROWSER, so it is the host's address for the API (published on 127.0.0.1:8000),
       # not the compose service name. Anugrah's variable name, kept (design.md §7).

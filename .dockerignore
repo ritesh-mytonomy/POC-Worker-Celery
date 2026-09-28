@@ -6,4 +6,8 @@ venv
 .pytest_cache
 .coverage
 htmlcov
-fixtures/out
+backend/fixtures/out
+backend/run_logs
+# The frontend has its own image (frontend/Dockerfile)
+frontend
+File Upload source code
