@@ -17,7 +17,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]          # the repo root: docker compose runs here
 API = os.environ.get("SCENARIO_API", "http://127.0.0.1:8000")
 BUCKET = "clinsync-poc"
-FIXTURES = ROOT / "backend" / "fixtures" / "out"
+FIXTURES = ROOT / "backend" / "tests" / "fixtures" / "out"
 TERMINAL = {"processed", "partial", "rejected", "error"}
 
 
@@ -131,11 +131,11 @@ def api(method: str, path: str, body: Any = None) -> tuple[int, Any]:
 
 
 def ensure_fixtures() -> Path:
-    """Build fixtures/out/ with the image (python-docx lives there), owned by the current user."""
+    """Build tests/fixtures/out/ with the image (python-docx lives there), owned by the current user."""
     if not (FIXTURES / "valid.docx").exists():
         FIXTURES.mkdir(parents=True, exist_ok=True)
         subprocess.run(["docker", "run", "--rm", "--network", "none", "--user", f"{os.getuid()}:{os.getgid()}",
-                        "-v", f"{FIXTURES}:/out", "clinsync-ingest-poc:dev", "python", "fixtures/make_fixtures.py",
+                        "-v", f"{FIXTURES}:/out", "clinsync-ingest-poc:dev", "python", "tests/fixtures/make_fixtures.py",
                         "/out"], check=True, capture_output=True)
     return FIXTURES
 

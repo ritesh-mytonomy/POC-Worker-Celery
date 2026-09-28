@@ -22,7 +22,7 @@ docker compose up -d --build --wait >/dev/null 2>&1 || { echo "stack failed to s
 sleep 5                                                   # workers finish booting, first sweeps run
 
 echo "== regenerate fixtures"
-rm -rf fixtures/out
+rm -rf tests/fixtures/out
 python3 -c "from scripts import lib; lib.ensure_fixtures()" || { echo "fixtures failed"; exit 2; }
 
 RUNS=(

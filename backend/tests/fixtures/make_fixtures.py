@@ -1,6 +1,6 @@
-"""Build every test fixture in design.md §10.1 into fixtures/out/ (or a given directory).
+"""Build every test fixture in design.md §10.1 into tests/fixtures/out/ (or a given directory).
 
-Usage: python fixtures/make_fixtures.py [OUT_DIR]
+Usage: python tests/fixtures/make_fixtures.py [OUT_DIR]      (from backend/)
 """
 import io
 import random
@@ -238,7 +238,7 @@ def build(out_dir: Path) -> list[Path]:
 
 
 def main() -> None:
-    """Build into fixtures/out/, or the directory given as the first argument."""
+    """Build into tests/fixtures/out/, or the directory given as the first argument."""
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "out"
     for path in build(out_dir):
         print(f"{path.stat().st_size:>11,}  {path}")

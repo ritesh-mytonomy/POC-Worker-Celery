@@ -139,9 +139,9 @@ backend/                one Python image (backend/Dockerfile) for the api, the w
   shared/               config, constants (queue and task names), errors, JSON logging — used by api and workers
   poc/                  POC-only: main.py (the api entry point: api.main:app + /poc/*), worker.py (worker-scan's entry
                         point: workers.tasks + the scan stub). Nothing depends on it, so it can be deleted.
-  fixtures/             make_fixtures.py builds every test file into backend/fixtures/out/
   scripts/              lib.py, run_all.sh, scenarios/ (S1–S8), checks/
-  tests/                api/, workers/, engine/, shared/, poc/, scripts/ — plus the shared conftest and helpers
+  tests/                api/, workers/, engine/, shared/, poc/, scripts/ — plus the shared conftest and helpers;
+                        fixtures/make_fixtures.py builds every test file (into tests/fixtures/out/ for the scenarios)
 frontend/               the React client (Anugrah's, ported), served by Vite on 127.0.0.1:5173
 infra/                  postgres/init.sql and test_db.sh, localstack/init-s3.sh
 specs/                  the specs: ingest-worker-poc (the original POC), upload-ingest-merge (current)

@@ -61,9 +61,8 @@ backend/                             one Python image — api, workers, poc (bac
 ├── engine/file_checks.py            pure: type detection, archive guards, streaming extraction, hashing, folder depth
 ├── shared/                          used by api and workers: config.py  constants.py  errors.py  logging.py
 ├── poc/                             POC-only entry points (main.py, worker.py); nothing imports it
-├── fixtures/make_fixtures.py        every test file, built into backend/fixtures/out/
 ├── scripts/                         lib.py · scenarios/ (S1–S8, U-S1–U-S6) · checks/ · run_all.sh
-└── tests/                           api/ · workers/ · engine/ · shared/ · poc/ · scripts/
+└── tests/                           api/ · workers/ · engine/ · shared/ · poc/ · scripts/ · fixtures/ (make_fixtures.py)
 frontend/                            ported from Upload POC Client/, trimmed (§7)
 infra/localstack/init-s3.sh          bucket, lifecycle rules, CORS
 infra/postgres/init.sql              = schema.sql (§3)

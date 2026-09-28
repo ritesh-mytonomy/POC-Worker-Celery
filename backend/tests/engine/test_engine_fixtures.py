@@ -1,4 +1,4 @@
-"""fixtures/make_fixtures.py builds every design.md §10.1 fixture with the property it exists for (task 5.1)."""
+"""tests/fixtures/make_fixtures.py builds every design.md §10.1 fixture with the property it exists for (task 5.1)."""
 import struct
 import subprocess
 import sys
@@ -17,8 +17,8 @@ def test_builds_every_fixture(fixtures_dir: Path) -> None:
 
 
 def test_cli_writes_to_given_directory(tmp_path: Path) -> None:
-    """`python fixtures/make_fixtures.py OUT` builds into OUT."""
-    script = Path(__file__).resolve().parents[2] / "fixtures" / "make_fixtures.py"
+    """`python tests/fixtures/make_fixtures.py OUT` builds into OUT."""
+    script = Path(__file__).resolve().parents[1] / "fixtures" / "make_fixtures.py"
     subprocess.run([sys.executable, str(script), str(tmp_path)], check=True, capture_output=True)
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(EXPECTED)
 

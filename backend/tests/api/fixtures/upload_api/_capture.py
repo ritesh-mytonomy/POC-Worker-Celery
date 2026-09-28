@@ -121,7 +121,7 @@ def main() -> None:
     api("initiate__409_duplicate", "POST", "/api/uploads/initiate",
         {"filename": "report.pdf", "fileSize": len(report), "contentType": "application/pdf"})
 
-    zip_data = (BACKEND / "fixtures" / "out" / "mixed.zip").read_bytes()
+    zip_data = (BACKEND / "tests" / "fixtures" / "out" / "mixed.zip").read_bytes()
     z = upload("mixed.zip", zip_data, "application/zip")
     api("complete__zip_extracting", "POST", "/api/uploads/complete", complete_body(z),
         note="ZIP → key under incoming/, extract_zip enqueued on Redis, status 'extracting'. No worker was running. "
