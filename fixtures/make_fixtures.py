@@ -74,8 +74,19 @@ def notes_pdf() -> bytes:
             b"2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n")
 
 
+def valid_pdf() -> bytes:
+    """valid.pdf — the same minimal PDF, as a direct upload (D2: PDFs allowed)."""
+    return notes_pdf()
+
+
+def renamed_exe_pdf() -> bytes:
+    """renamed_exe.pdf — the MZ bytes of renamed_exe.docx, named .pdf."""
+    return renamed_exe_docx()
+
+
 def mixed_zip() -> bytes:
-    """mixed.zip — 3 valid .docx + notes.pdf + readme.txt (S1)."""
+    """mixed.zip — 3 valid .docx + notes.pdf + readme.txt (S1). With PDFs allowed (D2), 4 stage and readme.txt is
+    rejected."""
     return _zip([(f"doc{i}.docx", docx_bytes(f"Mixed document {i}")) for i in range(1, 4)]
                 + [("notes.pdf", notes_pdf()), ("readme.txt", b"Read me.\n")])
 
@@ -210,6 +221,8 @@ FIXTURES: dict[str, Callable[[], bytes]] = {
     "inner_bomb.zip": inner_bomb_zip,
     "big100.zip": big100_zip,
     "mac_deep.zip": mac_deep_zip,
+    "valid.pdf": valid_pdf,
+    "renamed_exe.pdf": renamed_exe_pdf,
 }
 
 

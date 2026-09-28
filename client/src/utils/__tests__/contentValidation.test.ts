@@ -8,7 +8,7 @@ import {
 } from '@/utils/contentValidation';
 import type { UploadConfig } from '@/utils/uploadConfig';
 
-// The server's defaults (D2 open): .docx, and .zip of .docx, one subfolder at most.
+// A docx-only config (the default before D2 allowed PDFs): .docx, and .zip of .docx, one subfolder at most.
 const CONFIG: UploadConfig = {
   allowedTopLevelExt: ['docx', 'zip'],
   allowedZipEntryExt: ['docx'],
@@ -63,5 +63,38 @@ describe('the zip check (D16)', () => {
     const result = await validateUploadFile(await zipOf(['notes.pdf', '__MACOSX/._a.docx', 'x/y/deep.docx']), CONFIG);
     expect(result.valid).toBe(false);
     expect(result.errors).toEqual(['The ZIP file does not contain any DOCX files that can be added.']);
+  });
+});
+
+describe('PDFs, with the server defaults since D2 (docx, pdf, zip of docx and pdf)', () => {
+  const DEFAULTS: UploadConfig = { ...CONFIG, allowedTopLevelExt: ['docx', 'pdf', 'zip'], allowedZipEntryExt: ['docx', 'pdf'] };
+  const PDF = '%PDF-1.4\n%%EOF\n';
+  const zipWith = async (entries: Record<string, string>): Promise<File> => {
+    const zip = new JSZip();
+    for (const [name, content] of Object.entries(entries)) zip.file(name, content);
+    return new File([await zip.generateAsync({ type: 'arraybuffer' })], 'drop.zip', { type: 'application/zip' });
+  };
+
+  it('offers .pdf and accepts a real PDF', async () => {
+    expect(acceptedFileInput(DEFAULTS)).toBe('.docx,.pdf,.zip');
+    const result = await validateUploadFile(new File([PDF], 'Discharge Guide.pdf', { type: 'application/pdf' }), DEFAULTS);
+    expect(result).toEqual({ valid: true, errors: [] });
+  });
+
+  it('blocks a file named .pdf that is not a PDF', async () => {
+    const result = await validateUploadFile(new File(['MZ not a pdf'], 'fake.pdf'), DEFAULTS);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual(['The PDF file is corrupted or invalid.']);
+  });
+
+  it('counts a PDF inside a zip as usable, and warns only for the rest', async () => {
+    const result = await validateUploadFile(
+      await zipWith({ 'notes.pdf': PDF, 'readme.txt': 'Read me.', 'broken.pdf': 'not a pdf' }), DEFAULTS);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toEqual([
+      'readme.txt: .txt is not supported inside a ZIP.',
+      'broken.pdf: The PDF file is corrupted or invalid.',
+    ]);
+    expect(result.zipEntries?.filter((e) => e.valid).map((e) => e.path)).toEqual(['notes.pdf']);
   });
 });

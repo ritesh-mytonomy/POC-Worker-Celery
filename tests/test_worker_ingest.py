@@ -174,7 +174,21 @@ def test_valid_docx_is_staged_then_finished_then_incoming_deleted(ingest: Any, m
     assert all(not p.exists() for p in store.downloaded)                  # temp download removed
 
 
-@pytest.mark.parametrize(("fixture", "named"), [("renamed_exe.docx", "unknown"), ("renamed_zip.docx", "zip")])
+def test_valid_pdf_is_staged_as_pdf(ingest: Any, monkeypatch: pytest.MonkeyPatch, fixtures_dir: Path,
+                                    tmp_path: Path) -> None:
+    """D2: valid.pdf is detected as pdf, copied to staging and proposed as a processed candidate."""
+    rec, claim = Recorder(), a_claim("valid.pdf")
+    store = FakeStore(rec, Path(shutil.copy(fixtures_dir / "valid.pdf", tmp_path)))
+    run(ingest, monkeypatch, claim, store, rec)
+    work = [c for c in rec.calls if c[0] != "heartbeat"]
+    assert work[3][1] == {"detected_type": "pdf"}
+    candidate = next(c[1] for c in work if c[0] == "upsert_candidate")
+    assert (candidate["file_ext"], candidate["status"]) == ("pdf", "processed")
+    assert finals(rec) == [FinalStatus("processed")]
+
+
+@pytest.mark.parametrize(("fixture", "named"), [("renamed_exe.docx", "unknown"), ("renamed_zip.docx", "zip"),
+                                                ("renamed_exe.pdf", "unknown")])
 def test_renamed_file_is_rejected_naming_its_real_type(ingest: Any, monkeypatch: pytest.MonkeyPatch, fixtures_dir: Path,
                                                        tmp_path: Path, fixture: str, named: str) -> None:
     """A renamed file → finish(rejected) naming the detected type, no copy, no candidate, incoming deleted (R5.3)."""
@@ -235,13 +249,13 @@ def test_superseded_at_finish_is_logged_and_incoming_kept(ingest: Any, monkeypat
 
 def test_archive_goes_through_process_archive_then_finish_then_delete(ingest: Any, monkeypatch: pytest.MonkeyPatch,
                                                                       fixtures_dir: Path, tmp_path: Path) -> None:
-    """mixed.zip: 3 entries uploaded, 2 rejected, finish(partial), then the incoming object is deleted."""
+    """mixed.zip: 4 entries uploaded (3 .docx, notes.pdf), readme.txt rejected, finish(partial), then delete."""
     rec = Recorder()
     store = FakeStore(rec, Path(shutil.copy(fixtures_dir / "mixed.zip", tmp_path)))
     claim = a_claim("mixed.zip", is_archive=True)
     run(ingest, monkeypatch, claim, store, rec)
     assert finals(rec) == [FinalStatus("partial")]
-    assert sum(n == "upload" for n in rec.names()) == 3 and sum(n == "upsert_candidate" for n in rec.names()) == 5
+    assert sum(n == "upload" for n in rec.names()) == 4 and sum(n == "upsert_candidate" for n in rec.names()) == 5
     assert rec.names()[-1] == "delete" and rec.names().index("finish") < rec.names().index("delete")
 
 

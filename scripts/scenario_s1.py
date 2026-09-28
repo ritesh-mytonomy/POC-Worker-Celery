@@ -1,8 +1,8 @@
 """S1 · Happy path, mixed archive (design.md §10.2; R5, R6, R7, R10).
 
 Upload mixed.zip (3 valid .docx + notes.pdf + readme.txt), seed, confirm, wait for terminal. Assert: partial ·
-entries_total = entries_done = 5 · 3 processed candidates with objects in staging/ · 2 rejected candidates with
-reasons and no objects · incoming/ object deleted.
+entries_total = entries_done = 5 · 4 processed candidates (the .docx files and notes.pdf, now that D2 allows PDFs)
+with objects in staging/ · readme.txt rejected with its reason and no object · incoming/ object deleted.
 
 Usage: python3 scripts/scenario_s1.py [--keep]
 """
@@ -10,8 +10,8 @@ import uuid
 
 import lib
 
-PROCESSED = ["doc1.docx", "doc2.docx", "doc3.docx"]
-REJECTED = {"notes.pdf": ".pdf is not supported", "readme.txt": ".txt is not supported"}
+PROCESSED = ["doc1.docx", "doc2.docx", "doc3.docx", "notes.pdf"]
+REJECTED = {"readme.txt": ".txt is not supported"}
 
 
 def main() -> int:
@@ -36,7 +36,7 @@ def main() -> int:
                 {n: c["reject_reason"] for n, c in candidates.items() if c["status"] == "rejected"}, REJECTED)
         staged = sorted(k.rsplit("/", 1)[-1] for k in lib.staging_keys_for(file_id))
         s.check("objects in staging/ (processed only)", staged,
-                ["0000_doc1.docx", "0001_doc2.docx", "0002_doc3.docx"])
+                ["0000_doc1.docx", "0001_doc2.docx", "0002_doc3.docx", "0003_notes.pdf"])
         s.check("incoming/ object gone", lib.s3_keys(key), [])
         lib.assert_no_undeliverable(s)
     finally:

@@ -76,7 +76,7 @@ def test_seed_refuses_a_missing_object_with_400_and_writes_nothing(client: TestC
 
 
 @pytest.mark.parametrize("files", [
-    [{"file_name": "notes.pdf", "s3_key": "ClinSync/incoming/notes.pdf"}],          # A3: not allowed
+    [{"file_name": "notes.txt", "s3_key": "ClinSync/incoming/notes.txt"}],          # A3: not allowed
     [{"file_name": "noext", "s3_key": "ClinSync/incoming/noext"}],
     [{"file_name": "a.docx", "s3_key": "ClinSync/staging/a.docx"}],                 # not in incoming/
     [],

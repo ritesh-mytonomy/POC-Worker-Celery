@@ -7,11 +7,12 @@ from pathlib import Path
 
 EXPECTED = ["valid.docx", "renamed_exe.docx", "renamed_zip.docx", "mixed.zip", "big30.zip", "bomb.zip",
             "slip.zip", "encrypted.zip", "lying.zip", "dupnames.zip", "lying3.zip", "inner_bomb.zip", "big100.zip",
-            "mac_deep.zip"]
+            "mac_deep.zip", "valid.pdf", "renamed_exe.pdf"]
 
 
 def test_builds_every_fixture(fixtures_dir: Path) -> None:
-    """All fourteen files exist (§10.1 rev 1.3 added dupnames, lying3, inner_bomb, big100; the merge mac_deep)."""
+    """All sixteen files exist (§10.1 rev 1.3 added dupnames, lying3, inner_bomb, big100; the merge mac_deep, and
+    valid.pdf and renamed_exe.pdf once D2 allowed PDFs)."""
     assert sorted(p.name for p in fixtures_dir.iterdir()) == sorted(EXPECTED)
 
 

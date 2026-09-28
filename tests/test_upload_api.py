@@ -77,10 +77,19 @@ def test_part_count_is_the_size_over_the_part_size(client: TestClient, size: int
 
 def test_disallowed_type_is_400_with_the_default_settings(client: TestClient, db_session: Session,
                                                           fake_storage: FakeStorage) -> None:  # noqa: F811
-    """ALLOWED_TOP_LEVEL_EXT is docx,zip by default (D2): a .pdf gets 400, and nothing is created (U1.5)."""
-    response = initiate(client, "notes.pdf")
-    assert response.status_code == 400 and response.json() == {"detail": "Unsupported file type: notes.pdf"}
+    """ALLOWED_TOP_LEVEL_EXT is docx,pdf,zip by default (D2): a .txt gets 400, and nothing is created (U1.5)."""
+    response = initiate(client, "notes.txt")
+    assert response.status_code == 400 and response.json() == {"detail": "Unsupported file type: notes.txt"}
     assert fake_storage.calls == [] and db_session.execute(text("SELECT count(*) FROM upload_file")).scalar() == 0
+
+
+def test_pdf_is_allowed_with_the_default_settings(client: TestClient, db_session: Session,
+                                                  fake_storage: FakeStorage) -> None:  # noqa: F811
+    """D2: a .pdf is accepted — a staged, non-archive row with file_ext pdf."""
+    response = initiate(client, "Discharge Guide.pdf")
+    assert response.status_code == 200, response.text
+    row = db_session.execute(text("SELECT file_ext, is_archive, status FROM upload_file")).one()
+    assert (row.file_ext, row.is_archive, row.status) == ("pdf", False, "staged")
 
 
 def test_a_failed_insert_aborts_the_multipart_upload(client: TestClient, fake_storage: FakeStorage,  # noqa: F811

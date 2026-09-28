@@ -310,8 +310,8 @@ Anugrah's `VITE_SCAN_API_URL` stays as the Client's API base URL — renaming it
 | `UPLOAD_ABANDON_SECONDS` | 3600 (prod 86400) | The LLD's stale-upload sweeper: 24 h |
 | `POC_USER_ID` | 0 | The system actor (OD-19), until auth exists |
 | `MAX_ZIP_FOLDER_DEPTH` | 1 | Anugrah's rule, and the MVP workflows |
-| `ALLOWED_TOP_LEVEL_EXT` | `docx,zip` | **D2 — open** |
-| `ALLOWED_ZIP_ENTRY_EXT` | `docx` | **D2 — open** |
+| `ALLOWED_TOP_LEVEL_EXT` | `docx,pdf,zip` | **D2 — decided for the POC (rev 1.4)** |
+| `ALLOWED_ZIP_ENTRY_EXT` | `docx,pdf` | **D2 — decided for the POC (rev 1.4)** |
 | `VITE_UPLOAD_CONCURRENCY` (client) | 4 | Anugrah's default |
 
 ---
@@ -325,7 +325,7 @@ Each drives **Anugrah's Upload API exactly as the browser does** — `check-dupl
 | # | Scenario | Assert |
 |---|---|---|
 | **U-S1** | One `valid.docx` → commit | `processed` · commit adds 1 · in `GET /library/documents` · download returns the same SHA-256 · staging empty · no candidates left · one `batch_committed` audit row · **presigned URLs use `localhost`** |
-| **U-S2** | `mixed.zip` → commit | `partial` · commit adds the 3 `.docx` · rejected entries listed with reasons |
+| **U-S2** | `mixed.zip` → commit | `partial` · commit adds the 3 `.docx` and `notes.pdf` · `readme.txt` listed as rejected with its reason |
 | **U-S3** | Upload and commit `valid.docx`, then upload it again | the second `check-duplicate` reports a duplicate, and `initiate` returns 409 · the library still has 1 |
 | **U-S4** | A zip with `__MACOSX/` entries and a folder two levels deep | Mac entries absent from candidates and from `entries_total` · the deep entry rejected with the depth reason |
 | **U-S5** | Two files in one batch; commit after the small one is ready, the large one still uploading; commit again after it's ready | first commit adds 1 with `still_in_progress: 1` · second adds 1 more · a third adds 0 |
@@ -347,7 +347,7 @@ Plus abort: start a multipart upload, send half the parts, abort → `error` "Up
 
 1. `docker compose up`, open `http://localhost:5173`, log in with the mock login
 2. Drop `valid.docx` and `mixed.zip` — `mixed.zip` shows warnings for its bad entries but isn't blocked — and click **Upload**; both upload with progress bars, as before the merge
-3. Rows move to *Checking…*, then *Ready* and *Partly ready — 3 of 5*
-4. The review panel lists 4 ready and 2 rejected with reasons; click **Add 4 to library**
-5. The Library table on the Content Library page shows 4 documents; download one and open it
+3. Rows move to *Checking…*, then *Ready* and *Partly ready — 4 of 5*
+4. The review panel lists 5 ready and 1 rejected with its reason; click **Add 5 to library**
+5. The Library table on the Content Library page shows 5 documents (doc1–doc3, notes, valid); download one and open it
 6. Drop `valid.docx` again — refused as a duplicate before it uploads

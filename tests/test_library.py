@@ -145,13 +145,13 @@ def test_unknown_document_download_is_404(client: TestClient) -> None:
 # ── the client's one source of truth for file checks ───────────────────────
 
 def test_upload_config_comes_straight_from_the_settings(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """GET /api/v1/uploads/config: the defaults (D2 open: docx and zip of docx), and a changed setting shows up."""
+    """GET /api/v1/uploads/config: the defaults (D2: docx, pdf, and zip of those), and a changed setting shows up."""
     assert client.get("/api/v1/uploads/config").json() == {
-        "allowed_top_level_ext": ["docx", "zip"], "allowed_zip_entry_ext": ["docx"],
+        "allowed_top_level_ext": ["docx", "pdf", "zip"], "allowed_zip_entry_ext": ["docx", "pdf"],
         "max_upload_bytes": 5 * 1024 ** 3, "max_zip_folder_depth": 1}
-    monkeypatch.setenv("ALLOWED_TOP_LEVEL_EXT", "docx,zip,pdf")
+    monkeypatch.setenv("ALLOWED_TOP_LEVEL_EXT", "docx,zip")
     get_settings.cache_clear()
     try:
-        assert client.get("/api/v1/uploads/config").json()["allowed_top_level_ext"] == ["docx", "zip", "pdf"]
+        assert client.get("/api/v1/uploads/config").json()["allowed_top_level_ext"] == ["docx", "zip"]
     finally:
         get_settings.cache_clear()
