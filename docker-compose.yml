@@ -1,7 +1,9 @@
 name: clinsync-ingest-poc
 
 x-app: &app
-  build: .
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
   image: clinsync-ingest-poc:dev
   env_file:
     - path: .env
@@ -11,6 +13,8 @@ x-app: &app
     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-test}
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-test}
     AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    # Presigned URLs must name a host the browser can reach; the API itself uses AWS_ENDPOINT_URL.
+    S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:4566}
 
 x-worker: &worker
   <<: *app
@@ -25,6 +29,8 @@ services:
     image: localstack/localstack:2026.8.4
     environment:
       SERVICES: s3
+      # Check SigV4 signatures, as real S3 does — otherwise a presigned URL for the wrong host would still work.
+      S3_SKIP_SIGNATURE_VALIDATION: "0"
       LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN:-}
     ports:
       - "127.0.0.1:4566:4566"
@@ -57,6 +63,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinsync}
     volumes:
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # then clinsync_test from the same schema: the test suite's own database, never the stack's
+      - ./infra/postgres/test_db.sh:/docker-entrypoint-initdb.d/test_db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -92,6 +100,26 @@ services:
   worker-maint:
     <<: *worker
     command: celery -A workers.tasks worker -Q clinsync.maintenance -c 1 -B -n maint@%h
+
+  # The browser client (Anugrah's React app, ported — upload-ingest-merge Phase 6), served by Vite.
+  frontend:
+    build: ./frontend
+    image: clinsync-ingest-poc-frontend:dev
+    environment:
+      # Read by the BROWSER, so it is the host's address for the API (published on 127.0.0.1:8000),
+      # not the compose service name. Anugrah's variable name, kept (design.md §7).
+      VITE_SCAN_API_URL: http://localhost:8000
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5173/ >/dev/null"]   # IPv4: Vite listens on 0.0.0.0
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
 
 volumes:
   redis-data:

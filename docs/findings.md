@@ -45,3 +45,10 @@ Items noticed during the build, to fold into the findings note back to Tasneem.
   `MessageDeduplicationId = file_id`, or a `SETNX enqueued:{file_id}` marker with a TTL, cleared on claim), or base
   the threshold on measured queue lag (oldest-message age plus a margin) — and alert when reconcile actually
   requeues, since that should mean a lost message.
+- **Test backdating needs a superuser.** The LLD's `set_updated_at` triggers overwrite a backdated `updated_at`, so
+  the tests switch triggers off for that one statement with `SET LOCAL session_replication_role = replica`, which
+  needs a superuser (the compose role is). The real build's CI database may not grant that — it may need another
+  approach, e.g. a test-only role allowed to set `session_replication_role` (PostgreSQL 15+ `GRANT SET`).
+- **LocalStack skips S3 signature checks by default, so presign tests on a default LocalStack prove nothing.**
+  `S3_SKIP_SIGNATURE_VALIDATION=0` is required: until it was set, a PUT with a tampered signature returned 200. With
+  it, a tampered signature and the right URL on the wrong host (`127.0.0.1` for `localhost`) both get 403.

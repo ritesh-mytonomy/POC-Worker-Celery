@@ -1,0 +1,20 @@
+{
+  "endpoint": "PUT <presigned S3 URL>",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "note": "Sent by the browser straight to S3, not to the API. No Content-Type header (it is not in the signature). The Client reads the ETag response header, so the bucket CORS must expose it.",
+  "request": {
+    "method": "PUT",
+    "url": "http://localhost:4566/clinsync-uploads/processed/036af1f0-1525-48fa-9ea4-8f35c9b1d115/report.pdf?uploadId=CwvvIPSs0ddRRhXlSsDySez3T6DyTA49oTYoXCEZwxANvbYzQcFCMRDo39u-WbHFEti7uQg6Dls2fw_8Ep7xOO7Ikjsw8y6DhYSrlOxXZeuh4N6ZnlxBRMkXMC0VfU67&partNumber=1&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=test%2F20260925%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260925T114837Z&X-Amz-Expires=3600&X-Amz-SignedHeaders=host&X-Amz-Signature=a9fb40033c956f3369ab2321b220928e6f044cb2e303756537483ab79fafcced",
+    "headers": {},
+    "body": "<8388608 bytes>"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-origin": "http://localhost:5173",
+      "access-control-expose-headers": "ETag",
+      "etag": "\"100b6168b6b7874db1da1306ebaaf1b1\""
+    },
+    "body": ""
+  }
+}

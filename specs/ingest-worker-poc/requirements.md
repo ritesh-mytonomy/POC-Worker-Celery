@@ -1,5 +1,7 @@
 # Requirements — Ingest Worker POC (Celery + Redis)
 
+> **Paths moved (2026-09-28).** This is the original POC's spec, kept as the historical record. The code now lives under `backend/` (`app/` became `backend/api/` plus `backend/shared/`; `workers/`, `engine/`, `poc/`, `fixtures/`, `scripts/` and `tests/` moved under `backend/`). The current layout is in `specs/upload-ingest-merge/design.md` §2.
+
 | | |
 |---|---|
 | **Feature** | `ingest-worker-poc` |

@@ -1,0 +1,38 @@
+{
+  "endpoint": "POST /api/uploads/complete",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "note": "Content check after S3 completion; object and 'initiated' row are left behind.",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/complete",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "id": "331084eb-b4c1-479b-9f71-fef605702de9",
+      "fileId": "331084eb-b4c1-479b-9f71-fef605702de9",
+      "key": "processed/331084eb-b4c1-479b-9f71-fef605702de9/bad.pdf",
+      "uploadId": "18XoI7ZDMuBEH66SVfSsXw9Y6s-Fpp_nOoPluKJOKrkbzdCiMFu8bwg5pJbOiS76Sa9onsYyXMNzxC7MbwfIsTHMYsgzsoqWj_0FY_Y4hRnGnprZV3cGSHrPaTO88JnD",
+      "filename": "bad.pdf",
+      "fileSize": 16000,
+      "contentType": "application/pdf",
+      "parts": [
+        {
+          "partNumber": 1,
+          "etag": "\"bf7e44681106c79ed87c22fa1ebd8865\""
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "detail": "The PDF file is corrupted or invalid."
+    }
+  }
+}

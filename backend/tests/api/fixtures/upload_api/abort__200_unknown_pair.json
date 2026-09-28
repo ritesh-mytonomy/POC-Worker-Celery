@@ -1,0 +1,27 @@
+{
+  "endpoint": "POST /api/uploads/abort",
+  "captured_from": "File Upload POC @ 3d2bed9, unmodified; S3 = LocalStack (http://localhost:4566)",
+  "note": "Any pair is accepted: an unknown multipart upload is ignored and still returns ok. The Client also sends abort when a COMPLETED item is removed from the queue.",
+  "request": {
+    "method": "POST",
+    "path": "/api/uploads/abort",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "key": "processed/nope/x.pdf",
+      "uploadId": "nope"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-expose-headers": "ETag",
+      "access-control-allow-origin": "http://localhost:5173"
+    },
+    "body": {
+      "ok": true
+    }
+  }
+}
