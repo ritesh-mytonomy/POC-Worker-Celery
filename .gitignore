@@ -13,8 +13,8 @@ htmlcov/
 .env
 
 # Generated fixtures
-backend/tests/fixtures/out/
+workers/tests/fixtures/out/
 
 # Scenario runner output
-backend/run_logs/
+run_logs/
 

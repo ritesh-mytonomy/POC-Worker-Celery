@@ -1,12 +1,10 @@
-# Every direct dependency pinned to the version the suite was verified against.
+# The API image. Every direct dependency pinned to the version the suite was verified against.
 fastapi==0.141.1  # tests/test_routes_internal_auth.py walks its route tree, which changed in 0.14x
 uvicorn[standard]==0.53.0
 sqlalchemy==2.0.54
 psycopg[binary]==3.3.6
 pydantic-settings==2.15.0
-celery[redis]==5.6.3
+celery[redis]==5.6.3  # producer only (app/task_producer.py): the API never runs a worker
 boto3==1.43.101
-httpx==0.28.1
-python-docx==1.2.0
+httpx==0.28.1  # FastAPI's TestClient
 pytest==9.1.1
-pytest-cov==7.1.0

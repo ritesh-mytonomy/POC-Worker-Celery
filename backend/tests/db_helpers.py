@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from api.models import UploadBatch, UploadFile
-from api.repositories.files import claim
+from app.models import UploadBatch, UploadFile
+from app.repositories.files import claim
 
 MAX_ATTEMPTS = 3
 STALE = 30                               # the POC value

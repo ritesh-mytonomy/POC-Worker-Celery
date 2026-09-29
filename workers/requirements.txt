@@ -1,0 +1,8 @@
+# The worker image. Every direct dependency pinned to the version the suite was verified against.
+celery[redis]==5.6.3
+pydantic-settings==2.15.0
+boto3==1.43.101
+httpx==0.28.1  # the Internal API client (app/clients.py)
+python-docx==1.2.0  # tests/fixtures/make_fixtures.py builds the test .docx files
+pytest==9.1.1
+pytest-cov==7.1.0

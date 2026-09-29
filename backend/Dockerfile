@@ -1,6 +1,5 @@
-# One image for every backend service (R1.3): api, workers, poc. No CMD — each compose service sets its own command.
-# Built from the repo root (docker-compose.yml: context ., dockerfile backend/Dockerfile), so the schema test can
-# compare infra/postgres/init.sql with specs/…/schema.sql; the code runs from /srv/backend.
+# The API image: backend/ + shared/. Built from the repo root (docker-compose.yml: context ., dockerfile
+# backend/Dockerfile). No CMD — the api service sets its own command.
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -8,12 +7,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-WORKDIR /srv
+COPY backend/requirements.txt /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt
 
-COPY backend/requirements.txt .
-RUN pip install -r requirements.txt
-
-COPY . .
+COPY shared/ /srv/shared/
+COPY backend/ /srv/backend/
+# tests/test_models.py checks sql/schema.sql is the spec's schema byte for byte
+COPY specs/upload-ingest-merge/schema.sql /srv/specs/upload-ingest-merge/schema.sql
+ENV PYTHONPATH=/srv/backend:/srv
 WORKDIR /srv/backend
 
 # Run as an unprivileged user; the code stays root-owned and read-only to it.

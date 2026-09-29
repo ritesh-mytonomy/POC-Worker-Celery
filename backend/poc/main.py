@@ -1,6 +1,6 @@
 """The POC's API entry point (api runs `uvicorn poc.main:app`): the production app plus the /poc routes.
 
-Stand-ins for parts of the real product (design.md §6.1): /poc/seed, /poc/enqueue, /poc/scan-stub. Imports api/
+Stand-ins for parts of the real product (design.md §6.1): /poc/seed, /poc/enqueue, /poc/scan-stub. Imports app/
 only — never workers/ — so the API process still never loads the worker app (design.md §6.2a).
 """
 import uuid
@@ -10,15 +10,15 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from api import storage, task_producer
+from app import s3_client, task_producer
 from shared.config import get_settings
-from api.db import get_db_session
+from app.db import get_db_session
 from shared.errors import InvalidInput
 from shared.logging import get_logger
-from api.repositories import files
-from api.error_handlers import ApiError
+from app.repositories import files
+from app.error_handlers import ApiError
 from shared.constants import QUEUE_SCAN
-from poc import TASK_SCAN_STUB
+from shared.constants import TASK_SCAN_STUB
 
 
 def enqueue_scan_stub(seconds: float, enqueued_at: str) -> str:
@@ -100,7 +100,7 @@ def seed(body: SeedIn, db: Session = Depends(get_db_session)) -> SeedOut:
     files.check_seed_files([(f.file_name, f.s3_key) for f in body.files], s.ALLOWED_TOP_LEVEL_EXT)
     sized = []
     for f in body.files:
-        size = storage.object_size(f.s3_key)
+        size = s3_client.object_size(f.s3_key)
         if size is None:
             raise InvalidInput(f"{f.s3_key!r}: no such object in S3")
         sized.append((f.file_name, f.s3_key, size))
@@ -140,7 +140,7 @@ def scan_stub(body: ScanStubIn) -> ScanStubOut:
     return ScanStubOut(task_id=task_id, enqueued_at=enqueued_at)
 
 
-# The production app with the POC routes added. Nothing in api/ knows about this.
-from api.main import app  # noqa: E402
+# The production app with the POC routes added. Nothing in app/ knows about this.
+from app.main import app  # noqa: E402
 
 app.include_router(router)
