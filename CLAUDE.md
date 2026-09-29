@@ -21,5 +21,6 @@ Build strictly from the spec in `specs/ingest-worker-poc/`:
 
 ## Commands
 - Start everything: `docker compose up -d --wait`
-- Unit tests: `docker compose run --rm --no-deps api pytest tests/` (runs in `backend/`)
-- All scenarios: `./backend/scripts/run_all.sh`
+- Unit tests: `docker compose run --rm --no-deps api pytest` (backend + shared) and
+  `docker compose run --rm --no-deps worker-ingest pytest` (workers); `scripts/tests` on the host
+- All scenarios: `./scripts/run_all.sh`

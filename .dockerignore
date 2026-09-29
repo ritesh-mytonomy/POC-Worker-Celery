@@ -2,11 +2,12 @@
 .venv
 venv
 .env
+**/.env
 **/__pycache__
-.pytest_cache
+**/.pytest_cache
 .coverage
 htmlcov
-backend/tests/fixtures/out
-backend/run_logs
+workers/tests/fixtures/out
+run_logs
 # The frontend has its own image (frontend/Dockerfile)
 frontend

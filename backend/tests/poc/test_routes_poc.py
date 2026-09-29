@@ -8,9 +8,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from api import storage, task_producer
+from app import s3_client, task_producer
 from shared.config import get_settings
-from api.db import get_db_session
+from app.db import get_db_session
 from poc.main import app
 from tests.db_helpers import POC_USER
 
@@ -18,7 +18,7 @@ MISSING = "ClinSync/incoming/x/missing.docx"
 
 
 def fake_size(key: str) -> int | None:
-    """Stand-in for storage.object_size: every object exists except MISSING; its size is its key's length."""
+    """Stand-in for s3_client.object_size: every object exists except MISSING; its size is its key's length."""
     return None if key == MISSING else len(key)
 
 
@@ -26,7 +26,7 @@ def fake_size(key: str) -> int | None:
 def head(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Replace the HEAD on S3 and record the keys it was asked about."""
     asked: list[str] = []
-    monkeypatch.setattr(storage, "object_size", lambda key: asked.append(key) or fake_size(key))
+    monkeypatch.setattr(s3_client, "object_size", lambda key: asked.append(key) or fake_size(key))
     return asked
 
 

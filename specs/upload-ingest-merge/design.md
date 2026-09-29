@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Feature** | `upload-ingest-merge` · revision 1.5 |
+| **Feature** | `upload-ingest-merge` · revision 1.6 |
 | **Implements** | `requirements.md` U1–U11, UN-1–7 |
 | **Builds on** | Ingest Worker POC after `refactor/workers-tidy` — `engine/file_checks.py`, `workers/tasks.py`, `workers/clients.py`, `poc/main.py`, `poc/worker.py` |
 
@@ -13,7 +13,7 @@
 Anugrah's calls are **unchanged**. The Ingest pipeline takes over behind `complete`. Three new calls come after.
 
 ```
-Browser (frontend/)                      API (backend/api/)                  S3                     Worker
+Browser (frontend/)                      API (backend/app/)                  S3                     Worker
 ─────────────────                        ──────────                          ──                     ──────
 KEPT ─ Anugrah's Upload API ─────────────────────────────────────────────────────────────────────────────────
   POST /api/uploads/check-duplicate ───► name+size vs library
@@ -41,31 +41,34 @@ NEW ─────────────────────────�
 ## 2. Layout after the merge
 
 ```
-backend/                             one Python image — api, workers, poc (backend/Dockerfile, built from the repo root)
-├── api/                             the FastAPI service — the only component that touches PostgreSQL
+backend/                             the API image (backend/Dockerfile) — FastAPI, the only component that touches PostgreSQL
+├── app/
 │   ├── main.py                      routers (internal, uploads, multipart, library), CORS for CORS_ORIGINS
-│   ├── error_handlers.py            envelope only for /api/v1/* and /internal/*; {"detail"} for /api/uploads/* (§5.1, D14)
-│   ├── routes/multipart.py          Anugrah's /api/uploads/* endpoints, same contract, new internals
-│   ├── routes/uploads.py            /api/v1/uploads: confirm, batch status, staged, commit, config
-│   ├── routes/library.py            /api/v1/library: list, download
-│   ├── routes/internal.py           /internal/* for the workers
+│   ├── schemas.py                   every request/response model (Pydantic), one section per router
+│   ├── routers/multipart.py         Anugrah's /api/uploads/* endpoints, same contract, new internals
+│   ├── routers/uploads.py           /api/v1/uploads: confirm, batch status, staged, commit, config
+│   ├── routers/library.py           /api/v1/library: list, download
+│   ├── routers/internal.py          /internal/* for the workers
 │   ├── services/uploads.py          initiate, complete, abort, confirm, commit
 │   ├── services/sweeps.py           stale, reconcile, abandoned-upload sweeps
 │   ├── repositories/                files, candidates, documents, audit — all SQL
-│   ├── storage.py                   the API's own S3 calls (§4)
+│   ├── s3_client.py                 the API's own S3 calls and presigned URLs (§4)
 │   ├── task_producer.py             producer-only Celery instance: enqueue process_upload
+│   ├── error_handlers.py            envelope only for /api/v1/* and /internal/*; {"detail"} for /api/uploads/* (§5.1, D14)
 │   └── db.py  models.py  naming.py  security.py
-├── workers/                         Celery — never opens a database connection
-│   ├── tasks.py                     Celery app · Heartbeat · process_upload · sweeper tasks
-│   └── clients.py                   Internal API client (claim token) · S3 store · hash during download
+├── sql/schema.sql                   = specs/upload-ingest-merge/schema.sql (§3); Postgres runs it at first start
+├── poc/                             POC-only API routes (main.py); nothing imports it
+└── tests/                           the API's tests; fixtures/upload_api/ holds the contract captures
+workers/                             the worker image (workers/Dockerfile) — Celery, never opens a database connection
+├── app/tasks.py                     Celery app · Heartbeat · process_upload · sweeper tasks
+├── app/clients.py                   Internal API client (claim token) · S3 store · hash during download
 ├── engine/file_checks.py            pure: type detection, archive guards, streaming extraction, hashing, folder depth
-├── shared/                          used by api and workers: config.py  constants.py  errors.py  logging.py
-├── poc/                             POC-only entry points (main.py, worker.py); nothing imports it
-├── scripts/                         lib.py · scenarios/ (S1–S8, U-S1–U-S6) · checks/ · run_all.sh
-└── tests/                           api/ · workers/ · engine/ · shared/ · poc/ · scripts/ · fixtures/ (make_fixtures.py)
+├── poc/worker.py                    POC-only scan-stub worker; nothing imports it
+└── tests/                           the worker tests; fixtures/make_fixtures.py builds every test file
+shared/                              in both images: config.py  constants.py (queues, task names)  errors.py  logging.py
+scripts/                             end-to-end, against the running stack: lib.py · scenarios/ · checks/ · run_all.sh
 frontend/                            ported from Upload POC Client/, trimmed (§7)
 infra/localstack/init-s3.sh          bucket, lifecycle rules, CORS
-infra/postgres/init.sql              = schema.sql (§3)
 docker-compose.yml                   api, workers, frontend, postgres, redis, localstack
 docker-compose.entry-delay.yml       scenario override (S5, S5b)
 ```
@@ -74,13 +77,13 @@ docker-compose.entry-delay.yml       scenario override (S5, S5b)
 
 | File | Becomes |
 |---|---|
-| `upload_routes.py` | `backend/api/routes/multipart.py` — **same endpoints and bodies**, calling the Ingest services |
-| `s3_storage.py` | Its multipart and presign logic → `backend/api/storage.py` |
+| `upload_routes.py` | `backend/app/routers/multipart.py` — **same endpoints and bodies**, calling the Ingest services |
+| `s3_storage.py` | Its multipart and presign logic → `backend/app/s3_client.py` |
 | `upload_duplicates.py` | `repositories/documents.py` — now against the library |
-| `upload_validation.py` | Dropped — `backend/engine/file_checks.py` does this, in the Worker |
+| `upload_validation.py` | Dropped — `workers/engine/file_checks.py` does this, in the Worker |
 | `zip_extract.py`, `extract_tasks.py`, `celery_app.py`, `re_extract_zip.py` | Dropped — the Ingest worker and sweepers replace them |
 | `db.py`, `models.py`, `local_s3.py` | Dropped — Postgres, the Ingest models, LocalStack |
-| `validate_large_upload.py` | `backend/scripts/checks/check_large_upload.py` |
+| `validate_large_upload.py` | `scripts/checks/check_large_upload.py` |
 | `app.py`, `upload_reader.py`, `docx_sections.py`, `compare_engine.py`, `llm_client.py`, `source_tiers.py`, `references/` | Dropped — scan, out of scope |
 
 ---
@@ -135,9 +138,9 @@ The schema is **`schema.sql`**, in this folder. It implements the LLD's M1 `orga
 
 The *N of M* counts come from the batch's candidates. A commit deletes the candidates, so the Client keeps each file's last known counts, and the row still reads *Partly ready — 27 of 30* afterwards.
 
-## 4. The API's S3 module — `backend/api/storage.py`
+## 4. The API's S3 module — `backend/app/s3_client.py`
 
-The API needs S3 for multipart set-up, presigning, completion, the commit copy and downloads. The Worker keeps its own S3 code; the API must not import `backend/workers/`.
+The API needs S3 for multipart set-up, presigning, completion, the commit copy and downloads. The Worker keeps its own S3 code; the API must not import `workers/`.
 
 **Two clients, because of hostnames.** Inside Docker the API reaches LocalStack as `http://localstack:4566`, which a browser can't resolve. A presigned URL's host is part of its signature, so it can't be rewritten afterwards.
 
@@ -269,13 +272,13 @@ Small; none of the Ingest guarantees change.
 
 | Change | Where | How |
 |---|---|---|
-| Hash a single document | `backend/workers/clients.py` — download | Feed each 64 KB chunk to `hashlib.sha256` as it's written |
-| Hash an archive entry | `backend/engine/file_checks.py` — `extract_streaming` | Same, per entry. `hashlib` is standard library, so the engine stays pure |
-| Send the hash | `backend/workers/tasks.py` → `upsert_candidate(content_hash=…)` | New field in the candidate contract |
-| Title and duplicates | `backend/api/repositories/candidates.py` — upsert | Same transaction: set `proposed_title` and `title_norm`; look up `documents` by hash, then by `title_norm`; set `duplicate_of_document_id` and `duplicate_kind` |
-| Skip Mac and hidden files | `backend/engine/file_checks.py` — `inspect_archive` | Filter `__MACOSX/` and dot-files **before** counting, so `entries_total` and entry positions stay deterministic |
-| Folder depth | `backend/engine/file_checks.py` | Deeper than `MAX_ZIP_FOLDER_DEPTH` → entry-level rejection: *"Folders nested too deeply — at most one subfolder is supported"*. Anugrah's POC had this rule; kept |
-| Stale uploads | `backend/workers/tasks.py` + `backend/api/services/sweeps.py` | The LLD's stale-upload sweeper, same pattern as the other two: `staged` or `uploading` older than `UPLOAD_ABANDON_SECONDS` → abort multipart → `error` |
+| Hash a single document | `workers/app/clients.py` — download | Feed each 64 KB chunk to `hashlib.sha256` as it's written |
+| Hash an archive entry | `workers/engine/file_checks.py` — `extract_streaming` | Same, per entry. `hashlib` is standard library, so the engine stays pure |
+| Send the hash | `workers/app/tasks.py` → `upsert_candidate(content_hash=…)` | New field in the candidate contract |
+| Title and duplicates | `backend/app/repositories/candidates.py` — upsert | Same transaction: set `proposed_title` and `title_norm`; look up `documents` by hash, then by `title_norm`; set `duplicate_of_document_id` and `duplicate_kind` |
+| Skip Mac and hidden files | `workers/engine/file_checks.py` — `inspect_archive` | Filter `__MACOSX/` and dot-files **before** counting, so `entries_total` and entry positions stay deterministic |
+| Folder depth | `workers/engine/file_checks.py` | Deeper than `MAX_ZIP_FOLDER_DEPTH` → entry-level rejection: *"Folders nested too deeply — at most one subfolder is supported"*. Anugrah's POC had this rule; kept |
+| Stale uploads | `workers/app/tasks.py` + `backend/app/services/sweeps.py` | The LLD's stale-upload sweeper, same pattern as the other two: `staged` or `uploading` older than `UPLOAD_ABANDON_SECONDS` → abort multipart → `error` |
 
 **Why Mac files are filtered first.** A zip made on a Mac carries a hidden `__MACOSX/._name.docx` beside every file. Without the filter, every Mac zip would end `partial`, full of confusing rejections. Anugrah's POC already ignored these; the Ingest worker didn't.
 
@@ -325,7 +328,7 @@ Anugrah's `VITE_SCAN_API_URL` stays as the Client's API base URL — renaming it
 
 ## 9. Verification
 
-### 9.1 New scenarios — `backend/scripts/scenarios/scenario_u*.py`
+### 9.1 New scenarios — `scripts/scenarios/scenario_u*.py`
 
 Each drives **Anugrah's Upload API exactly as the browser does** — `check-duplicate` → `initiate` → `parts/presign` → PUT parts → `complete` — then the new review and commit calls. Standard library only, like the existing scenarios; each ends with cleanup and `ae.undeliver == 0`.
 
@@ -344,8 +347,8 @@ Plus abort: start a multipart upload, send half the parts, abort → `error` "Up
 
 | Layer | What |
 |---|---|
-| Upload API | Every kept endpoint accepts **its original request body** — the fixtures in `backend/tests/api/fixtures/upload_api/` · presign and abort refuse a `key` / `uploadId` pair that doesn't match a row · `complete` never downloads the object · `complete` is idempotent · parallel `initiate`s with one `batchId` → one batch; a committed batch → 409 · aborting a processed file changes nothing and returns `{"ok": true}` · errors on `/api/uploads/*` are `{"detail"}` (422 for bad bodies), on `/api/v1/*` and `/internal/*` the envelope |
-| `backend/api/storage.py` | Presigned host is the public one; parts sorted on completion |
+| Upload API | Every kept endpoint accepts **its original request body** — the fixtures in `backend/tests/fixtures/upload_api/` · presign and abort refuse a `key` / `uploadId` pair that doesn't match a row · `complete` never downloads the object · `complete` is idempotent · parallel `initiate`s with one `batchId` → one batch; a committed batch → 409 · aborting a processed file changes nothing and returns `{"ok": true}` · errors on `/api/uploads/*` are `{"detail"}` (422 for bad bodies), on `/api/v1/*` and `/internal/*` the envelope |
+| `backend/app/s3_client.py` | Presigned host is the public one; parts sorted on completion |
 | Commit | Incremental; twice adds nothing twice; two identical files → one document; two files with the same title → one document; candidates deleted; audit row written; a crashed-then-re-run commit leaves no orphans; two concurrent commits give one result |
 | Engine | Hash equals `sha256` of the bytes; `__MACOSX/` and dot-files skipped before counting; depth rule |
 | Client — Vitest | One `batchId` per Upload click, sent by every `initiate` of it · status mapping · zip check warns on bad entries and blocks only when none is usable · review panel enables **Add** only when something is ready |

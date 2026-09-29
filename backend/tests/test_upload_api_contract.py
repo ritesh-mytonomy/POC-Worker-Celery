@@ -1,0 +1,319 @@
+"""Contract tests: Anugrah's Upload API, driven by the 0.2 fixtures in tests/fixtures/upload_api/ (golden rule).
+
+Each case sends the fixture's request body as captured — only server-generated values (key, uploadId, id, fileId)
+are swapped for the ones our own initiate returned — and checks the response:
+  * the status: the fixture's, or the merge's where the spec changes it (INTENDED, with the requirement);
+  * a success body has every field of the fixture response;
+  * an error body is exactly {"detail": …} — word for word where the spec keeps the error.
+The fixtures upload report.pdf, so these tests allow pdf: D2 makes the type lists configuration.
+"""
+import json
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from shared.config import get_settings
+from app.db import get_db_session
+from app.main import app
+from app.models import Document
+from app.naming import file_name_norm, title_norm, title_of
+from tests.db_helpers import POC_ORG, POC_USER, full_row
+from tests.upload_fakes import FakeStorage, Recorder, enqueued, fake_storage  # noqa: F401 — fixtures
+
+FIXTURES = Path(__file__).parent / "fixtures" / "upload_api"
+
+# Where the merge answers differently from Anugrah's server, on purpose. Fields stay; status or outcome changes.
+INTENDED = {
+    "check_duplicate__true": "U6.1 — the match is against library documents",
+    "initiate__409_duplicate": "U1.4 — the match is against library documents",
+    "abort__200_unknown_pair": "U4.1 / U2.2 — a pair matching no row is 404 (the client ignores abort's answer)",
+    "list_parts__404_after_abort": "U2.2 — the row check comes first: an aborted file is 409, still a failure",
+    "complete": "U3.4 — status is `uploaded` (was stored)",
+    "complete__zip_extracting": "U3.4 — a zip is `uploaded` too (was extracting)",
+    "complete__409_already_completed": "U3.5 — a second complete is 200 with the current status",
+    "complete__409_duplicate_by_hash": "D7 — complete no longer hashes; commit keeps duplicates out of the library",
+    "complete__400_validation": "U3.3 — complete no longer validates content; the worker does",
+}
+NOT_API = {"s3_put_part"}              # the browser's PUT to S3: proved by scripts/check_presign_from_host.sh
+
+
+def fixture(name: str) -> dict[str, Any]:
+    """One captured exchange."""
+    return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+@pytest.fixture
+def client(db_session: Session, monkeypatch: pytest.MonkeyPatch, fake_storage: FakeStorage,  # noqa: F811
+           enqueued: Recorder) -> Iterator[TestClient]:  # noqa: F811
+    """The real app on the rolled-back session, fake S3, recorded enqueue, and pdf allowed (the fixtures' type)."""
+    monkeypatch.setenv("ALLOWED_TOP_LEVEL_EXT", "docx,zip,pdf")
+    get_settings.cache_clear()
+    app.dependency_overrides[get_db_session] = lambda: db_session
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+    get_settings.cache_clear()
+
+
+def send(client: TestClient, name: str, **replace: Any) -> tuple[Any, dict[str, Any]]:
+    """Send the fixture's request, with server-generated body values replaced; return (response, fixture)."""
+    fx = fixture(name)
+    request = fx["request"]
+    path = replace.pop("path", request["path"])        # a path carrying a server-generated uploadId
+    body = request["body"]
+    if isinstance(body, dict):
+        body = {k: replace.get(k, v) for k, v in body.items()}
+    response = client.request(request["method"], path, json=body)
+    return response, fx
+
+
+def assert_success_fields(response: Any, fx: dict[str, Any]) -> Any:
+    """200, and the body has every field of the fixture response."""
+    assert response.status_code == 200, response.text
+    body, expected = response.json(), fx["response"]["body"]
+    if isinstance(expected, list):
+        assert isinstance(body, list)
+        for item in body:
+            assert set(expected[0]) <= set(item), set(expected[0]) - set(item)
+    else:
+        assert set(expected) <= set(body), set(expected) - set(body)
+    return body
+
+
+def assert_same_error(response: Any, fx: dict[str, Any]) -> None:
+    """The fixture's status and exactly its {"detail": …} body."""
+    assert response.status_code == fx["response"]["status"], response.text
+    assert response.json() == fx["response"]["body"]
+
+
+def add_library_document(db: Session, file_name: str, size_bytes: int) -> None:
+    """A document already in the library, for the duplicate cases."""
+    document_id = uuid.uuid4()
+    db.add(Document(document_id=document_id, organization_id=POC_ORG, title=title_of(file_name),
+                    title_norm=title_norm(title_of(file_name)), file_name=file_name,
+                    file_name_norm=file_name_norm(file_name), s3_key=f"ClinSync/processed/x/{document_id}",
+                    file_ext=file_name.rsplit(".", 1)[1], size_bytes=size_bytes, content_hash="0" * 64,
+                    version_uploaded_by=POC_USER))
+    db.flush()
+
+
+# ── 3.1 check-duplicate and initiate ───────────────────────────────────────
+
+def test_check_duplicate(client: TestClient) -> None:
+    """No such library document → exactly the fixture body: duplicate false, message null."""
+    response, fx = send(client, "check_duplicate")
+    assert_success_fields(response, fx)
+    assert response.json() == fx["response"]["body"]
+
+
+def test_check_duplicate__true(client: TestClient, db_session: Session) -> None:
+    """INTENDED (U6.1): a library document of that name (any case) and size → the fixture body, word for word."""
+    add_library_document(db_session, "report.pdf", fixture("check_duplicate")["request"]["body"]["fileSize"])
+    response, fx = send(client, "check_duplicate__true")
+    assert response.status_code == 200 and response.json() == fx["response"]["body"]
+    assert "duplicate" in response.json()["message"].lower()
+
+
+def test_initiate(client: TestClient) -> None:
+    """Every fixture field, the same part size and count, plus batchId; the key is under incoming/."""
+    response, fx = send(client, "initiate")
+    body = assert_success_fields(response, fx)
+    expected = fx["response"]["body"]
+    assert (body["partSize"], body["totalParts"]) == (expected["partSize"], expected["totalParts"])
+    assert body["id"] == body["fileId"] and uuid.UUID(body["batchId"])
+    assert body["key"].startswith(f"ClinSync/incoming/{POC_ORG}/{body['batchId']}/{body['id']}_")
+    assert body["key"].endswith("_report.pdf")
+
+
+def test_initiate__409_duplicate(client: TestClient, db_session: Session) -> None:
+    """INTENDED (U1.4): a library duplicate → 409 with exactly the fixture's detail, which says "Duplicate"."""
+    add_library_document(db_session, "report.pdf", fixture("initiate")["request"]["body"]["fileSize"])
+    response, fx = send(client, "initiate__409_duplicate")
+    assert_same_error(response, fx)
+    assert "duplicate" in response.json()["detail"].lower()
+
+
+@pytest.mark.parametrize("name", ["initiate__413_too_large", "initiate__422_zero_size"])
+def test_initiate_errors_are_word_for_word(client: TestClient, name: str) -> None:
+    """413 over 5 GiB and FastAPI's 422 for fileSize 0: the fixture's status and body exactly."""
+    response, fx = send(client, name)
+    assert_same_error(response, fx)
+
+
+# ── 3.2 parts/presign and parts ────────────────────────────────────────────
+
+def initiated(client: TestClient) -> dict[str, Any]:
+    """Our own initiate, from the fixture's request: the server-generated values later requests carry."""
+    response, _ = send(client, "initiate")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_parts_presign(client: TestClient) -> None:
+    """The fixture body, with our key and uploadId → a URL for each part number asked for."""
+    ids = initiated(client)
+    response, fx = send(client, "parts_presign", key=ids["key"], uploadId=ids["uploadId"])
+    body = assert_success_fields(response, fx)
+    assert set(body["urls"]) == set(fx["response"]["body"]["urls"]) == {"1", "2"}
+
+
+def test_parts_presign__400_empty(client: TestClient) -> None:
+    """partNumbers [] → 400 with exactly the fixture's detail (checked before the row)."""
+    ids = initiated(client)
+    response, fx = send(client, "parts_presign__400_empty", key=ids["key"], uploadId=ids["uploadId"])
+    assert_same_error(response, fx)
+
+
+def test_list_parts(client: TestClient, fake_storage: FakeStorage) -> None:  # noqa: F811
+    """After two parts are PUT → {parts: [{partNumber, etag, size}]} as the fixture, in part order."""
+    ids = initiated(client)
+    for n in (2, 1):
+        fake_storage.put_part(ids["uploadId"], n)
+    path = f"/api/uploads/{ids['uploadId']}/parts?key={quote(ids['key'], safe='')}"
+    response, fx = send(client, "list_parts", path=path)
+    body = assert_success_fields(response, fx)
+    for item in body["parts"]:
+        assert set(fx["response"]["body"]["parts"][0]) == set(item)
+    assert [p["partNumber"] for p in body["parts"]] == [1, 2]
+
+
+# ── 3.3 abort and the upload list ──────────────────────────────────────────
+
+def set_status(db: Session, file_id: str, status: str) -> None:
+    """Move a file on, as the worker would."""
+    db.execute(text("UPDATE upload_file SET status = :s WHERE file_id = :id"), {"s": status, "id": file_id})
+    db.commit()
+
+
+def test_abort(client: TestClient, db_session: Session) -> None:
+    """Mid-upload abort → exactly the fixture body {"ok": true}; the file ends error "Upload cancelled"."""
+    ids = initiated(client)
+    response, fx = send(client, "abort", key=ids["key"], uploadId=ids["uploadId"])
+    assert response.status_code == 200 and response.json() == fx["response"]["body"]
+    row = full_row(db_session, uuid.UUID(ids["id"]))
+    assert (row["status"], row["status_message"]) == ("error", "Upload cancelled")
+
+
+def test_abort__200_unknown_pair(client: TestClient) -> None:
+    """INTENDED (U4.1): Anugrah answered ok for any pair; now a pair matching no row is 404, with the detail body."""
+    response, fx = send(client, "abort__200_unknown_pair")
+    assert response.status_code == 404 and response.json() == {"detail": "Upload not found."}
+
+
+def test_abort__200_completed_file(client: TestClient, db_session: Session) -> None:
+    """What the client sends when a finished row is removed: {"ok": true}, and the file is untouched (D15)."""
+    ids = initiated(client)
+    set_status(db_session, ids["id"], "processed")
+    before = full_row(db_session, uuid.UUID(ids["id"]))
+    response, fx = send(client, "abort__200_completed_file", key=ids["key"], uploadId=ids["uploadId"])
+    assert response.status_code == 200 and response.json() == fx["response"]["body"]
+    assert full_row(db_session, uuid.UUID(ids["id"])) == before
+
+
+def test_list_parts__404_after_abort(client: TestClient) -> None:
+    """INTENDED (U2.2): after abort the row check refuses first — 409, still a failure, with the detail body."""
+    ids = initiated(client)
+    send(client, "abort", key=ids["key"], uploadId=ids["uploadId"])
+    path = f"/api/uploads/{ids['uploadId']}/parts?key={quote(ids['key'], safe='')}"
+    response, _ = send(client, "list_parts__404_after_abort", path=path)
+    assert response.status_code == 409 and response.json() == {"detail": "Upload is not awaiting completion."}
+
+
+def test_list_uploads(client: TestClient, db_session: Session) -> None:
+    """Every fixture field on every item; uploads past `uploading` only, newest first."""
+    first, second = initiated(client), initiated(client)
+    set_status(db_session, first["id"], "processed")
+    set_status(db_session, second["id"], "uploaded")
+    # One test transaction gives both rows the same created_at; age the first so "newest first" is observable.
+    db_session.execute(text("UPDATE upload_file SET created_at = created_at - interval '1 minute' WHERE file_id = :id"),
+                       {"id": first["id"]})
+    db_session.commit()
+    response, fx = send(client, "list_uploads")
+    body = assert_success_fields(response, fx)
+    assert [item["id"] for item in body] == [second["id"], first["id"]]
+    assert set(fx["response"]["body"][0]) == set(body[0])
+
+
+# ── 3.4 complete ───────────────────────────────────────────────────────────
+
+def uploaded_parts(client: TestClient, fake_storage: FakeStorage, filename: str, size: int) -> dict[str, Any]:  # noqa: F811
+    """initiate → presign → the browser's PUTs, as start() does; return the values complete's body carries."""
+    ids = client.post("/api/uploads/initiate", json={"filename": filename, "fileSize": size,
+                                                      "contentType": "application/octet-stream"}).json()
+    numbers = list(range(1, ids["totalParts"] + 1))
+    client.post("/api/uploads/parts/presign", json={"key": ids["key"], "uploadId": ids["uploadId"],
+                                                    "partNumbers": numbers})
+    parts = [{"partNumber": n, "etag": fake_storage.put_part(ids["uploadId"], n)} for n in numbers]
+    return {"id": ids["id"], "fileId": ids["fileId"], "key": ids["key"], "uploadId": ids["uploadId"], "parts": parts}
+
+
+def complete_as_fixture(client: TestClient, fake_storage: FakeStorage, name: str) -> tuple[Any, dict[str, Any]]:  # noqa: F811
+    """Upload the fixture's file (same name and size), then send the fixture's complete body with our ids."""
+    request = fixture(name)["request"]["body"]
+    ids = uploaded_parts(client, fake_storage, request["filename"], request["fileSize"])
+    return send(client, name, **ids)
+
+
+def test_complete(client: TestClient, fake_storage: FakeStorage, enqueued: Recorder) -> None:  # noqa: F811
+    """Every fixture field plus batchId; status is `uploaded` (INTENDED, U3.4: was "stored"); enqueued once."""
+    response, fx = complete_as_fixture(client, fake_storage, "complete")
+    body = assert_success_fields(response, fx)
+    assert body["status"] == "uploaded" and uuid.UUID(body["batchId"])
+    assert body["key"].startswith(f"ClinSync/incoming/{POC_ORG}/{body['batchId']}/{body['id']}_")
+    assert enqueued.calls == [(body["id"], str(POC_ORG))]
+
+
+def test_complete__zip_extracting(client: TestClient, fake_storage: FakeStorage, enqueued: Recorder) -> None:  # noqa: F811
+    """INTENDED (U3.4): a zip is no longer `extracting` — every file goes the same way, `uploaded` and enqueued."""
+    response, fx = complete_as_fixture(client, fake_storage, "complete__zip_extracting")
+    assert assert_success_fields(response, fx)["status"] == "uploaded" and len(enqueued.calls) == 1
+
+
+def test_complete__409_already_completed(client: TestClient, fake_storage: FakeStorage,  # noqa: F811
+                                         enqueued: Recorder) -> None:  # noqa: F811
+    """INTENDED (U3.5): a second complete returns the current status with 200 and enqueues nothing more."""
+    request = fixture("complete__409_already_completed")["request"]["body"]
+    ids = uploaded_parts(client, fake_storage, request["filename"], request["fileSize"])
+    send(client, "complete", **ids)
+    response, fx = send(client, "complete__409_already_completed", **ids)
+    assert assert_success_fields(response, fixture("complete"))["status"] == "uploaded"
+    assert len(enqueued.calls) == 1
+
+
+@pytest.mark.parametrize("name", ["complete__409_duplicate_by_hash", "complete__400_validation"])
+def test_complete_no_longer_hashes_or_validates(client: TestClient, fake_storage: FakeStorage,  # noqa: F811
+                                                enqueued: Recorder, name: str) -> None:  # noqa: F811
+    """INTENDED (D7, U3.3): same bytes under a new name, or bytes that are not a PDF, complete `uploaded` —
+    the worker checks content and hashes; commit keeps duplicates out of the library."""
+    response, _ = complete_as_fixture(client, fake_storage, name)
+    assert assert_success_fields(response, fixture("complete"))["status"] == "uploaded"
+    assert len(enqueued.calls) == 1
+
+
+def test_complete__400_no_parts(client: TestClient, fake_storage: FakeStorage) -> None:  # noqa: F811
+    """parts [] → 400 with exactly the fixture's detail."""
+    request = fixture("complete__400_no_parts")["request"]["body"]
+    ids = uploaded_parts(client, fake_storage, request["filename"], request["fileSize"])
+    response, fx = send(client, "complete__400_no_parts", **{**ids, "parts": []})
+    assert_same_error(response, fx)
+
+
+def test_complete__404_unknown(client: TestClient) -> None:
+    """The fixture's unknown key → 404 with exactly its detail."""
+    response, fx = send(client, "complete__404_unknown")
+    assert_same_error(response, fx)
+
+
+def test_every_fixture_has_a_contract_case() -> None:
+    """Each API fixture in tests/fixtures/upload_api/ is exercised by name in this module (21 of 22; not the S3 PUT)."""
+    source = Path(__file__).read_text()
+    names = {f.stem for f in FIXTURES.glob("*.json")} - NOT_API
+    assert len(names) == 21
+    assert {n for n in names if f'"{n}"' not in source and f"test_{n}(" not in source} == set()

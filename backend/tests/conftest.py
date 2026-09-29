@@ -1,16 +1,14 @@
 """Shared fixtures for compose PostgreSQL: rolled-back sessions and committed rows.
 
-Tests use their own database, clinsync_test, created from infra/postgres/init.sql when the Postgres container is
+Tests use their own database, clinsync_test, created from backend/sql/schema.sql when the Postgres container is
 first initialised (infra/postgres/test_db.sh). The stack's API and workers use only clinsync, so the running
 stack's sweepers can never touch a row a test commits. Database tests skip when PostgreSQL is unreachable, unless
 REQUIRE_DB=1, in which case they fail.
 """
 import os
-import sys
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 
 from sqlalchemy.engine import make_url
 
@@ -29,7 +27,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 from sqlalchemy.pool import NullPool  # noqa: E402
 
 from shared.config import get_settings  # noqa: E402
-from api.db import get_engine  # noqa: E402
+from app.db import get_engine  # noqa: E402
 from tests.db_helpers import NOT_CONFIRMED, POC_ORG, POC_USER, SIZE  # noqa: E402
 
 
@@ -125,14 +123,3 @@ def race_engine() -> Iterator[Engine]:
     engine = create_engine(get_settings().DATABASE_URL, poolclass=NullPool)
     yield engine
     engine.dispose()
-
-
-@pytest.fixture(scope="session")
-def fixtures_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Every design.md §10.1 fixture, built once per test session into a temporary directory."""
-    sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
-    import make_fixtures
-
-    out = tmp_path_factory.mktemp("fixtures")
-    make_fixtures.build(out)
-    return out

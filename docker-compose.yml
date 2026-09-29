@@ -4,7 +4,7 @@ x-app: &app
   build:
     context: .
     dockerfile: backend/Dockerfile
-  image: clinsync-ingest-poc:dev
+  image: clinsync-ingest-poc-backend:dev
   env_file:
     - path: .env
       required: false
@@ -18,6 +18,10 @@ x-app: &app
 
 x-worker: &worker
   <<: *app
+  build:
+    context: .
+    dockerfile: workers/Dockerfile
+  image: clinsync-ingest-poc-workers:dev
   depends_on:
     redis:
       condition: service_healthy
@@ -62,7 +66,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-clinsync}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clinsync}
     volumes:
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./backend/sql/schema.sql:/docker-entrypoint-initdb.d/init.sql:ro
       # then clinsync_test from the same schema: the test suite's own database, never the stack's
       - ./infra/postgres/test_db.sh:/docker-entrypoint-initdb.d/test_db.sh:ro
     healthcheck:
@@ -91,15 +95,15 @@ services:
 
   worker-ingest:
     <<: *worker
-    command: celery -A workers.tasks worker -Q clinsync.ingest -c ${INGEST_CONCURRENCY:-2} -n ingest@%h
+    command: celery -A app.tasks worker -Q clinsync.ingest -c ${INGEST_CONCURRENCY:-2} -n ingest@%h
 
   worker-scan:
     <<: *worker
-    command: celery -A poc.worker worker -Q clinsync.scan -c 1 -n scan@%h   # POC wrapper: workers.tasks + scan stub
+    command: celery -A poc.worker worker -Q clinsync.scan -c 1 -n scan@%h   # POC wrapper: app.tasks + scan stub
 
   worker-maint:
     <<: *worker
-    command: celery -A workers.tasks worker -Q clinsync.maintenance -c 1 -B -n maint@%h
+    command: celery -A app.tasks worker -Q clinsync.maintenance -c 1 -B -n maint@%h
 
   # The browser client (Anugrah's React app, ported — upload-ingest-merge Phase 6), served by Vite.
   frontend:

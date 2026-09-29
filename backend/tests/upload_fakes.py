@@ -1,4 +1,4 @@
-"""Test doubles for the Upload API tests: an in-memory api.storage and a recording enqueue."""
+"""Test doubles for the Upload API tests: an in-memory app.s3_client and a recording enqueue."""
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from api import storage, task_producer
+from app import s3_client, task_producer
 from shared.config import get_settings
 
 NO_SUCH_UPLOAD = "The specified upload does not exist."                    # S3's messages
@@ -15,7 +15,7 @@ INVALID_PART = "One or more of the specified parts could not be found."
 
 @dataclass
 class FakeStorage:
-    """api.storage's multipart and object calls, in memory. Records every call by name."""
+    """app.s3_client's multipart and object calls, in memory. Records every call by name."""
 
     uploads: dict[str, dict[int, str]] = field(default_factory=dict)     # upload_id -> {part_number: etag}
     keys: dict[str, str] = field(default_factory=dict)                   # upload_id -> key
@@ -48,17 +48,17 @@ class FakeStorage:
         """Stored parts in order; a gone upload raises NoSuchUpload."""
         self.calls.append("list_parts")
         if upload_id not in self.uploads:
-            raise storage.NoSuchUpload(NO_SUCH_UPLOAD, "NoSuchUpload")
+            raise s3_client.NoSuchUpload(NO_SUCH_UPLOAD, "NoSuchUpload")
         return [{"partNumber": n, "etag": e, "size": 8} for n, e in sorted(self.uploads[upload_id].items())]
 
     def complete_multipart(self, key: str, upload_id: str, parts: list[dict[str, Any]]) -> str:
         """Assemble: every part must be stored with that ETag, else InvalidParts; the upload is then gone."""
         self.calls.append("complete_multipart")
         if upload_id not in self.uploads:
-            raise storage.NoSuchUpload(NO_SUCH_UPLOAD, "NoSuchUpload")
+            raise s3_client.NoSuchUpload(NO_SUCH_UPLOAD, "NoSuchUpload")
         stored = self.uploads[upload_id]
         if any(stored.get(int(p["partNumber"])) != p["etag"] for p in parts):
-            raise storage.InvalidParts(INVALID_PART, "InvalidPart")
+            raise s3_client.InvalidParts(INVALID_PART, "InvalidPart")
         del self.uploads[upload_id]
         self.objects.add(key)
         return f"http://localstack:4566/{get_settings().S3_BUCKET}/{key}"
@@ -89,11 +89,11 @@ class FakeStorage:
 
 @pytest.fixture
 def fake_storage(monkeypatch: pytest.MonkeyPatch) -> FakeStorage:
-    """Replace every api.storage call the Upload API makes with the in-memory fake."""
+    """Replace every app.s3_client call the Upload API makes with the in-memory fake."""
     fake = FakeStorage()
     for name in ("create_multipart", "presign_part", "list_parts", "complete_multipart", "abort_multipart", "exists",
                  "copy", "delete_many"):
-        monkeypatch.setattr(storage, name, getattr(fake, name))
+        monkeypatch.setattr(s3_client, name, getattr(fake, name))
     return fake
 
 

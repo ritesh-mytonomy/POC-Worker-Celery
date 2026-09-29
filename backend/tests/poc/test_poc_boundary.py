@@ -1,34 +1,27 @@
-"""The dependency points one way (rev 1.4): poc/ may import api/, shared/ and workers/, never the reverse — so deleting
-poc/ cannot break production."""
+"""The dependency points one way (rev 1.4): backend/poc/ may import app/ and shared/, never the reverse — so
+deleting poc/ cannot break the API."""
 import ast
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]          # backend/
+BACKEND = Path(__file__).resolve().parents[2]
+SHARED = BACKEND.parent / "shared"
 
 
-def test_production_entry_points_load_no_poc_module() -> None:
-    """In a fresh interpreter, api.main and workers.tasks (as a worker loads it) pull in no poc module."""
-    code = ("import sys, api.main, workers.tasks as w; w.app.loader.import_default_modules(); "
-            "print(sorted(m for m in sys.modules if m == 'poc' or m.startswith('poc.')))")
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
-    assert out.strip().splitlines()[-1] == "[]"
-
-
-def test_production_source_never_imports_or_includes_poc() -> None:
-    """No file in api/, shared/ or workers/ imports poc, or names a poc module in a string (such as a Celery include=)."""
+def _poc_offenders(paths: list[Path], root: Path) -> list[str]:
+    """Every import of poc, or string naming a poc module (such as a Celery include=), in these files."""
     offenders = []
-    for path in [*ROOT.glob("api/**/*.py"), *ROOT.glob("shared/**/*.py"), *ROOT.glob("workers/**/*.py")]:
+    for path in paths:
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Import) and any(a.name == "poc" or a.name.startswith("poc.") for a in node.names):
-                offenders.append(f"{path.relative_to(ROOT)}: import")
+                offenders.append(f"{path.relative_to(root)}: import")
             elif isinstance(node, ast.ImportFrom) and node.module and (node.module == "poc" or
                                                                        node.module.startswith("poc.")):
-                offenders.append(f"{path.relative_to(ROOT)}: from-import")
+                offenders.append(f"{path.relative_to(root)}: from-import")
             elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.startswith("poc."):
-                offenders.append(f"{path.relative_to(ROOT)}: string {node.value!r}")
-    assert offenders == []
+                offenders.append(f"{path.relative_to(root)}: string {node.value!r}")
+    return offenders
 
 
 def _loaded(modules: str, prefixes: tuple[str, ...]) -> list[str]:
@@ -39,11 +32,17 @@ def _loaded(modules: str, prefixes: tuple[str, ...]) -> list[str]:
     return eval(out.strip().splitlines()[-1])  # noqa: S307 — our own printed list
 
 
-def test_scan_worker_never_loads_the_fastapi_app() -> None:
-    """poc.worker (worker-scan) loads neither api.main nor FastAPI: TASK_SCAN_STUB comes from poc/__init__.py."""
-    assert _loaded("poc.worker", ("api.main", "fastapi", "starlette", "poc.main")) == []
+def test_the_api_entry_point_loads_no_poc_module() -> None:
+    """In a fresh interpreter, app.main pulls in no poc module."""
+    assert _loaded("app.main", ("poc",)) == []
+
+
+def test_api_and_shared_source_never_import_or_include_poc() -> None:
+    """No file in app/ or shared/ imports poc, or names a poc module in a string."""
+    paths = [*BACKEND.glob("app/**/*.py"), *SHARED.glob("*.py")]
+    assert _poc_offenders(paths, BACKEND.parent) == []
 
 
 def test_api_never_loads_the_worker_app() -> None:
-    """poc.main (the api) loads neither workers.tasks nor Celery's worker machinery (design.md §6.2a)."""
-    assert _loaded("poc.main", ("workers", "poc.worker")) == []
+    """poc.main (the api) loads no worker module nor the scan stub (design.md §6.2a)."""
+    assert _loaded("poc.main", ("app.tasks", "app.clients", "engine", "poc.worker")) == []
